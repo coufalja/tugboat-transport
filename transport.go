@@ -154,46 +154,43 @@ type Transport struct {
 		queues   map[string]sendQueue
 		breakers map[string]*circuit.Breaker
 	}
-	sysEvents    ITransportEvent
-	ctx          context.Context
-	preSendBatch atomic.Value
-	preSend      atomic.Value
-	postSend     atomic.Value
-	msgHandler   IMessageHandler
-	resolver     IResolver
-	trans        raftio.ITransport
-	fs           vfs.FS
-	stopper      *syncutil.Stopper
-	dir          server.SnapshotDirFunc
-	env          *server.Env
-	metrics      Metrics
-	chunks       *Chunk
-	cancel       context.CancelFunc
-	sourceID     string
-	nhConfig     config.NodeHostConfig
-	jobs         uint64
+	sysEvents        ITransportEvent
+	ctx              context.Context
+	preSendBatch     atomic.Value
+	preSend          atomic.Value
+	postSend         atomic.Value
+	msgHandler       IMessageHandler
+	resolver         IResolver
+	trans            raftio.ITransport
+	fs               vfs.FS
+	stopper          *syncutil.Stopper
+	dir              server.SnapshotDirFunc
+	env              *server.Env
+	metrics          Metrics
+	chunks           *Chunk
+	cancel           context.CancelFunc
+	sourceID         string
+	jobs             uint64
+	deploymentID     uint64
+	maxSendQueueSize uint64
 }
 
 // NewTransport creates a new Transport object.
-func NewTransport(nhConfig config.NodeHostConfig,
-	handler IMessageHandler, env *server.Env, resolver IResolver,
-	dir server.SnapshotDirFunc, sysEvents ITransportEvent,
-	fs vfs.FS) (*Transport, error) {
-	sourceID := nhConfig.RaftAddress
+func NewTransport(sid string, did uint64, wireTransport config.TransportFactory, handler IMessageHandler, env *server.Env, resolver IResolver, dir server.SnapshotDirFunc, sysEvents ITransportEvent, fs vfs.FS, maxSendQueueSize uint64) (*Transport, error) {
 	t := &Transport{
-		nhConfig:   nhConfig,
-		env:        env,
-		sourceID:   sourceID,
-		resolver:   resolver,
-		stopper:    syncutil.NewStopper(),
-		dir:        dir,
-		sysEvents:  sysEvents,
-		fs:         fs,
-		msgHandler: handler,
+		env:              env,
+		sourceID:         sid,
+		deploymentID:     did,
+		resolver:         resolver,
+		stopper:          syncutil.NewStopper(),
+		dir:              dir,
+		sysEvents:        sysEvents,
+		fs:               fs,
+		msgHandler:       handler,
+		maxSendQueueSize: maxSendQueueSize,
 	}
-	chunks := NewChunk(t.handleRequest,
-		t.snapshotReceived, t.dir, t.nhConfig.GetDeploymentID(), fs)
-	t.trans = nhConfig.Expert.TransportFactory.Create(nhConfig, t.handleRequest, chunks.Add)
+	chunks := NewChunk(t.handleRequest, t.snapshotReceived, t.dir, did, fs)
+	t.trans = wireTransport.Create(config.NodeHostConfig{RaftAddress: sid, DeploymentID: did}, t.handleRequest, chunks.Add)
 	t.chunks = chunks
 	plog.Infof("transport type: %s", t.trans.Name())
 	if err := t.trans.Start(); err != nil {
@@ -267,10 +264,9 @@ func (t *Transport) GetCircuitBreaker(key string) *circuit.Breaker {
 }
 
 func (t *Transport) handleRequest(req pb.MessageBatch) {
-	did := t.nhConfig.GetDeploymentID()
-	if req.DeploymentId != did {
+	if req.DeploymentId != t.deploymentID {
 		plog.Warningf("deployment id does not match %d vs %d, message dropped",
-			req.DeploymentId, did)
+			req.DeploymentId, t.deploymentID)
 		return
 	}
 	if req.BinVer != raftio.TransportBinVersion {
@@ -339,7 +335,7 @@ func (t *Transport) send(req pb.Message) (bool, failedSend) {
 	if !ok {
 		sq = sendQueue{
 			ch: make(chan pb.Message, sendQueueLen),
-			rl: rate.NewRateLimiter(t.nhConfig.MaxSendQueueSize),
+			rl: rate.NewRateLimiter(t.maxSendQueueSize),
 		}
 		t.mu.queues[key] = sq
 	}
@@ -412,7 +408,7 @@ func (t *Transport) processMessages(remoteHost string,
 		SourceAddress: t.sourceID,
 		BinVer:        raftio.TransportBinVersion,
 	}
-	did := t.nhConfig.GetDeploymentID()
+	did := t.deploymentID
 	requests := make([]pb.Message, 0)
 	for {
 		idleTimer.Reset(idleTimeout)

@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/cockroachdb/errors v1.8.6
-	github.com/coufalja/tugboat v0.0.0-20211122104532-a58b0f81404d
+	github.com/coufalja/tugboat v0.0.0-20211122124819-9f8c24601327
 	github.com/juju/ratelimit v1.0.1
 	github.com/lni/goutils v1.3.1-0.20210517080819-7f56813dc438
 	github.com/lni/vfs v0.2.0

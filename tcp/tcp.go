@@ -616,3 +616,15 @@ func (t *TCP) getConnection(ctx context.Context,
 	}
 	return conn, nil
 }
+
+// Factory is a default TCP transport factory.
+type Factory struct{}
+
+func (f *Factory) Validate(s string) bool {
+	return true
+}
+
+// Create creates a TCP based transport instance.
+func (f *Factory) Create(nhConfig config.NodeHostConfig, handler raftio.MessageHandler, chunkHandler raftio.ChunkHandler) raftio.ITransport {
+	return NewTCPTransport(nhConfig, handler, chunkHandler)
+}

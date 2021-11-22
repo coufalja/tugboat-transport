@@ -100,7 +100,7 @@ func NewChunk(onReceive func(pb.MessageBatch),
 func (c *Chunk) Add(chunk pb.Chunk) bool {
 	if chunk.DeploymentId != c.did ||
 		chunk.BinVer != raftio.TransportBinVersion {
-		plog.Errorf("invalid did or binver, %d, %d, %d, %d",
+		plog.Errorf("invalid deploymentID or binver, %d, %d, %d, %d",
 			chunk.DeploymentId, c.did, chunk.BinVer, raftio.TransportBinVersion)
 		return false
 	}
@@ -382,7 +382,6 @@ func (c *Chunk) toMessage(chunk pb.Chunk,
 	fn := c.fs.PathBase(chunk.Filepath)
 	s.Filepath = c.fs.PathJoin(snapDir, fn)
 	s.FileSize = chunk.FileSize
-	s.Witness = chunk.Witness
 	m.Snapshot = s
 	m.Snapshot.Files = files
 	for idx := range m.Snapshot.Files {

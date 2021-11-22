@@ -98,7 +98,7 @@ func runChunkTest(t *testing.T,
 	defer stopper.Stop()
 	defer tt.cleanup()
 	chunks := NewChunk(trans.handleRequest,
-		trans.snapshotReceived, trans.dir, trans.nhConfig.GetDeploymentID(), fs)
+		trans.snapshotReceived, trans.dir, trans.deploymentID, fs)
 	ts := getTestChunk()
 	snapDir := chunks.dir(ts[0].ClusterId, ts[0].NodeId)
 	if err := fs.MkdirAll(snapDir, 0o755); err != nil {
@@ -512,54 +512,6 @@ func TestSnapshotWithExternalFilesAreHandledByChunk(t *testing.T) {
 	fs := vfs.NewStrictMem()
 	testSnapshotWithExternalFilesAreHandledByChunk(t, true, 0, fs)
 	testSnapshotWithExternalFilesAreHandledByChunk(t, false, 1, fs)
-}
-
-func TestWitnessSnapshotCanBeHandled(t *testing.T) {
-	fn := func(t *testing.T, chunks *Chunk, handler *testMessageHandler) {
-		ss := pb.Snapshot{
-			Filepath: "",
-			FileSize: 0,
-			Index:    100,
-			Term:     200,
-			Files:    nil,
-			Dummy:    false,
-			Witness:  true,
-		}
-		msg := pb.Message{
-			Type:      pb.InstallSnapshot,
-			To:        2,
-			From:      1,
-			ClusterId: 100,
-			Snapshot:  ss,
-		}
-		inputs, err := splitSnapshotMessage(msg)
-		if err != nil {
-			t.Fatalf("failed to get chunks %v", err)
-		}
-		if len(inputs) != 1 {
-			t.Errorf("got %d chunks, want 1", len(inputs))
-		}
-		chunk := inputs[0]
-		if chunk.BinVer != raftio.TransportBinVersion || !chunk.Witness ||
-			chunk.ClusterId != 100 || chunk.From != 1 || chunk.NodeId != 2 {
-			t.Errorf("unexpected chunk %+v", chunk)
-		}
-		for _, c := range inputs {
-			if len(c.Data) == 0 {
-				t.Errorf("data is empty")
-			}
-			c.DeploymentId = 1
-			added := chunks.addLocked(c)
-			if !added {
-				t.Errorf("failed to add chunk")
-			}
-		}
-		if handler.getSnapshotCount(100, 2) != 1 {
-			t.Errorf("failed to receive snapshot")
-		}
-	}
-	fs := vfs.NewStrictMem()
-	runChunkTest(t, fn, fs)
 }
 
 func TestSnapshotRecordWithoutExternalFilesCanBeSplitIntoChunk(t *testing.T) {

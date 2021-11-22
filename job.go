@@ -225,16 +225,11 @@ func (j *job) sendChunks(chunks []pb.Chunk) error {
 		default:
 		}
 		chunk.DeploymentId = j.deploymentID
-		if !chunk.Witness {
-			// TODO: add a test for such error
-			// TODO: add a test to show that failed sendChunks for other reasons will
-			// 			 be reported
-			data, err := loadChunkData(chunk, chunkData, j.fs)
-			if err != nil {
-				panicNow(err)
-			}
-			chunk.Data = data
+		data, err := loadChunkData(chunk, chunkData, j.fs)
+		if err != nil {
+			panicNow(err)
 		}
+		chunk.Data = data
 		if err := j.sendChunk(chunk, j.conn); err != nil {
 			return err
 		}

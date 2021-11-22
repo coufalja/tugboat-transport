@@ -144,7 +144,7 @@ func (t *Transport) createJob(key raftio.NodeInfo, streaming bool, sz int) *job 
 		plog.Warningf("job count is rate limited %d", r)
 		return nil
 	}
-	job := newJob(t.ctx, key.ClusterID, key.NodeID, t.nhConfig.GetDeploymentID(),
+	job := newJob(t.ctx, key.ClusterID, key.NodeID, t.deploymentID,
 		streaming, sz, t.trans, t.stopper.ShouldStop(), t.fs)
 	job.postSend = t.postSend
 	job.preSend = t.preSend

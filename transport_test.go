@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/coufalja/tugboat"
+	"github.com/coufalja/tugboat-transport/tcp"
 	"github.com/coufalja/tugboat/config"
 	"github.com/coufalja/tugboat/raftio"
 	"github.com/coufalja/tugboat/raftpb"
@@ -327,8 +328,7 @@ func newNOOPTestTransport(handler IMessageHandler, fs vfs.FS) (*Transport,
 	if err != nil {
 		panic(err)
 	}
-	transport, err := NewTransport(c,
-		handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs)
+	transport, err := NewTransport("localhost:9876", 1, &NOOPTransportFactory{}, handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs, 256*1024*1024)
 	if err != nil {
 		panic(err)
 	}
@@ -358,8 +358,8 @@ func newTestTransport(handler IMessageHandler,
 	if err != nil {
 		panic(err)
 	}
-	transport, err := NewTransport(c,
-		handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs)
+	transport, err := NewTransport("localhost:9876", 1, &tcp.Factory{},
+		handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs, 256*1024*1024)
 	if err != nil {
 		panic(err)
 	}
@@ -617,7 +617,7 @@ func testSourceAddressWillBeAddedToNodeRegistry(t *testing.T, mutualTLS bool, fs
 	key := raftio.GetNodeInfo(100, 200)
 	v, ok := nodes.Addr.Load(key)
 	if !ok {
-		t.Errorf("did not record source address")
+		t.Errorf("deploymentID not record source address")
 	}
 	if v.(string) != serverAddress {
 		t.Errorf("v %s, want %s", v, serverAddress)
@@ -722,7 +722,7 @@ func testSnapshotCanBeSent(t *testing.T,
 	m.Snapshot.FileSize = getTestSnapshotFileSize(sz)
 	dir := tt.GetSnapshotDir(100, 12, testSnapshotIndex)
 	chunks := NewChunk(trans.handleRequest,
-		trans.snapshotReceived, trans.dir, trans.nhConfig.GetDeploymentID(), fs)
+		trans.snapshotReceived, trans.dir, trans.deploymentID, fs)
 	snapDir := chunks.dir(100, 2)
 	if err := fs.MkdirAll(snapDir, 0o755); err != nil {
 		t.Fatalf("%v", err)
@@ -951,7 +951,7 @@ func testSnapshotWithExternalFilesCanBeSend(t *testing.T,
 	}()
 	defer stopper.Stop()
 	chunks := NewChunk(trans.handleRequest,
-		trans.snapshotReceived, trans.dir, trans.nhConfig.GetDeploymentID(), fs)
+		trans.snapshotReceived, trans.dir, trans.deploymentID, fs)
 	ts := getTestChunk()
 	snapDir := chunks.dir(ts[0].ClusterId, ts[0].NodeId)
 	if err := fs.MkdirAll(snapDir, 0o755); err != nil {
