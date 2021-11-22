@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/cockroachdb/errors v1.8.6
-	github.com/coufalja/tugboat v0.0.0-20210930120336-4fdaafcdc9e9
+	github.com/coufalja/tugboat v0.0.0-20211122104532-a58b0f81404d
 	github.com/juju/ratelimit v1.0.1
 	github.com/lni/goutils v1.3.1-0.20210517080819-7f56813dc438
 	github.com/lni/vfs v0.2.0
@@ -29,5 +29,3 @@ require (
 	golang.org/x/exp v0.0.0-20200513190911-00229845015e // indirect
 	golang.org/x/sys v0.0.0-20210616094352-59db8d763f22 // indirect
 )
-
-replace github.com/coufalja/tugboat => ../tugboat
