@@ -75,7 +75,7 @@ type requestHeader struct {
 }
 
 // TODO:
-// TCP is never reliable [1]. dragonboat uses application layer crc32 checksum
+// Transport is never reliable [1]. dragonboat uses application layer crc32 checksum
 // to help protecting raft state and log from some faulty network switches or
 // buggy kernels. However, this is not necessary when TLS encryption is used.
 // Update tcp.go to stop crc32 checking messages when TLS is used.
@@ -316,21 +316,21 @@ func (c *connection) SetWriteDeadline(t time.Time) error {
 	return c.conn.SetWriteDeadline(t)
 }
 
-// TCPConnection is the connection used for sending raft messages to remote
+// Connection is the connection used for sending raft messages to remote
 // nodes.
-type TCPConnection struct {
+type Connection struct {
 	conn      net.Conn
 	header    []byte
 	payload   []byte
 	encrypted bool
 }
 
-var _ raftio.IConnection = (*TCPConnection)(nil)
+var _ raftio.IConnection = (*Connection)(nil)
 
-// NewTCPConnection creates and returns a new TCPConnection instance.
-func NewTCPConnection(conn net.Conn,
-	rb *ratelimit.Bucket, wb *ratelimit.Bucket, encrypted bool) *TCPConnection {
-	return &TCPConnection{
+// NewConnection creates and returns a new Connection instance.
+func NewConnection(conn net.Conn,
+	rb *ratelimit.Bucket, wb *ratelimit.Bucket, encrypted bool) *Connection {
+	return &Connection{
 		conn:      newConnection(conn, rb, wb),
 		header:    make([]byte, requestHeaderSize),
 		payload:   make([]byte, perConnBufSize),
@@ -338,15 +338,15 @@ func NewTCPConnection(conn net.Conn,
 	}
 }
 
-// Close closes the TCPConnection instance.
-func (c *TCPConnection) Close() {
+// Close closes the Connection instance.
+func (c *Connection) Close() {
 	if err := c.conn.Close(); err != nil {
 		plog.Errorf("failed to close the connection %v", err)
 	}
 }
 
 // SendMessageBatch sends a raft message batch to remote node.
-func (c *TCPConnection) SendMessageBatch(batch pb.MessageBatch) error {
+func (c *Connection) SendMessageBatch(batch pb.MessageBatch) error {
 	header := requestHeader{method: raftType}
 	sz := batch.SizeUpperLimit()
 	var buf []byte
@@ -359,21 +359,21 @@ func (c *TCPConnection) SendMessageBatch(batch pb.MessageBatch) error {
 	return writeMessage(c.conn, header, buf, c.header, c.encrypted)
 }
 
-// TCPSnapshotConnection is the connection for sending raft snapshot chunks to
+// SnapshotConnection is the connection for sending raft snapshot chunks to
 // remote nodes.
-type TCPSnapshotConnection struct {
+type SnapshotConnection struct {
 	conn      net.Conn
 	header    []byte
 	encrypted bool
 }
 
-var _ raftio.ISnapshotConnection = (*TCPSnapshotConnection)(nil)
+var _ raftio.ISnapshotConnection = (*SnapshotConnection)(nil)
 
-// NewTCPSnapshotConnection creates and returns a new snapshot connection.
-func NewTCPSnapshotConnection(conn net.Conn,
+// NewSnapshotConnection creates and returns a new snapshot connection.
+func NewSnapshotConnection(conn net.Conn,
 	rb *ratelimit.Bucket, wb *ratelimit.Bucket,
-	encrypted bool) *TCPSnapshotConnection {
-	return &TCPSnapshotConnection{
+	encrypted bool) *SnapshotConnection {
+	return &SnapshotConnection{
 		conn:      newConnection(conn, rb, wb),
 		header:    make([]byte, requestHeaderSize),
 		encrypted: encrypted,
@@ -381,7 +381,7 @@ func NewTCPSnapshotConnection(conn net.Conn,
 }
 
 // Close closes the snapshot connection.
-func (c *TCPSnapshotConnection) Close() {
+func (c *SnapshotConnection) Close() {
 	defer func() {
 		if err := c.conn.Close(); err != nil {
 			plog.Debugf("failed to close the connection %v", err)
@@ -394,7 +394,7 @@ func (c *TCPSnapshotConnection) Close() {
 }
 
 // SendChunk sends the specified snapshot chunk to remote node.
-func (c *TCPSnapshotConnection) SendChunk(chunk pb.Chunk) error {
+func (c *SnapshotConnection) SendChunk(chunk pb.Chunk) error {
 	header := requestHeader{method: snapshotType}
 	sz := chunk.Size()
 	buf := make([]byte, sz)
@@ -402,9 +402,9 @@ func (c *TCPSnapshotConnection) SendChunk(chunk pb.Chunk) error {
 	return writeMessage(c.conn, header, buf, c.header, c.encrypted)
 }
 
-// TCP is a TCP based transport module for exchanging raft messages and
+// Transport is a Transport based transport module for exchanging raft messages and
 // snapshots between NodeHost instances.
-type TCP struct {
+type Transport struct {
 	readBucket     *ratelimit.Bucket
 	stopper        *syncutil.Stopper
 	connStopper    *syncutil.Stopper
@@ -415,13 +415,11 @@ type TCP struct {
 	encrypted      bool
 }
 
-var _ raftio.ITransport = (*TCP)(nil)
-
-// NewTCPTransport creates and returns a new TCP transport module.
+// NewTCPTransport creates and returns a new Transport transport module.
 func NewTCPTransport(nhConfig config.NodeHostConfig,
 	requestHandler raftio.MessageHandler,
-	chunkHandler raftio.ChunkHandler) raftio.ITransport {
-	t := &TCP{
+	chunkHandler raftio.ChunkHandler) *Transport {
+	t := &Transport{
 		nhConfig:       nhConfig,
 		stopper:        syncutil.NewStopper(),
 		connStopper:    syncutil.NewStopper(),
@@ -440,8 +438,8 @@ func NewTCPTransport(nhConfig config.NodeHostConfig,
 	return t
 }
 
-// Start starts the TCP transport module.
-func (t *TCP) Start() error {
+// Start starts the Transport transport module.
+func (t *Transport) Start() error {
 	address := t.nhConfig.GetListenAddress()
 	tlsConfig, err := t.nhConfig.GetServerTLSConfig()
 	if err != nil {
@@ -491,41 +489,41 @@ func (t *TCP) Start() error {
 	return nil
 }
 
-// Close closes the TCP transport module.
-func (t *TCP) Close() error {
+// Close closes the Transport transport module.
+func (t *Transport) Close() error {
 	t.stopper.Stop()
 	t.connStopper.Stop()
 	return nil
 }
 
 // GetConnection returns a new raftio.IConnection for sending raft messages.
-func (t *TCP) GetConnection(ctx context.Context,
+func (t *Transport) GetConnection(ctx context.Context,
 	target string) (raftio.IConnection, error) {
 	conn, err := t.getConnection(ctx, target)
 	if err != nil {
 		return nil, err
 	}
-	return NewTCPConnection(conn, nil, nil, t.encrypted), nil
+	return NewConnection(conn, nil, nil, t.encrypted), nil
 }
 
 // GetSnapshotConnection returns a new raftio.IConnection for sending raft
 // snapshots.
-func (t *TCP) GetSnapshotConnection(ctx context.Context,
+func (t *Transport) GetSnapshotConnection(ctx context.Context,
 	target string) (raftio.ISnapshotConnection, error) {
 	conn, err := t.getConnection(ctx, target)
 	if err != nil {
 		return nil, err
 	}
-	return NewTCPSnapshotConnection(conn,
+	return NewSnapshotConnection(conn,
 		t.readBucket, t.writeBucket, t.encrypted), nil
 }
 
-// Name returns a human readable name of the TCP transport module.
-func (t *TCP) Name() string {
+// Name returns a human readable name of the Transport transport module.
+func (t *Transport) Name() string {
 	return TCPTransportName
 }
 
-func (t *TCP) serveConn(conn net.Conn) {
+func (t *Transport) serveConn(conn net.Conn) {
 	magicNum := make([]byte, len(magicNumber))
 	header := make([]byte, requestHeaderSize)
 	tbuf := make([]byte, payloadBufferSize)
@@ -587,7 +585,7 @@ func setTCPConn(conn *net.TCPConn) error {
 
 // FIXME:
 // context.Context is ignored
-func (t *TCP) getConnection(ctx context.Context,
+func (t *Transport) getConnection(ctx context.Context,
 	target string) (net.Conn, error) {
 	timeout := time.Duration(dialTimeoutSecond) * time.Second
 	conn, err := net.DialTimeout("tcp", target, timeout)
@@ -615,16 +613,4 @@ func (t *TCP) getConnection(ctx context.Context,
 		}
 	}
 	return conn, nil
-}
-
-// Factory is a default TCP transport factory.
-type Factory struct{}
-
-func (f *Factory) Validate(s string) bool {
-	return true
-}
-
-// Create creates a TCP based transport instance.
-func (f *Factory) Create(nhConfig config.NodeHostConfig, handler raftio.MessageHandler, chunkHandler raftio.ChunkHandler) raftio.ITransport {
-	return NewTCPTransport(nhConfig, handler, chunkHandler)
 }

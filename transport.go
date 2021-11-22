@@ -176,7 +176,7 @@ type Transport struct {
 }
 
 // NewTransport creates a new Transport object.
-func NewTransport(sid string, did uint64, wireTransport config.TransportFactory, handler IMessageHandler, env *server.Env, resolver IResolver, dir server.SnapshotDirFunc, sysEvents ITransportEvent, fs vfs.FS, maxSendQueueSize uint64) (*Transport, error) {
+func NewTransport(sid string, did uint64, wireTransport WireTransportFunc, handler IMessageHandler, env *server.Env, resolver IResolver, dir server.SnapshotDirFunc, sysEvents ITransportEvent, fs vfs.FS, maxSendQueueSize uint64) (*Transport, error) {
 	t := &Transport{
 		env:              env,
 		sourceID:         sid,
@@ -190,7 +190,7 @@ func NewTransport(sid string, did uint64, wireTransport config.TransportFactory,
 		maxSendQueueSize: maxSendQueueSize,
 	}
 	chunks := NewChunk(t.handleRequest, t.snapshotReceived, t.dir, did, fs)
-	t.trans = wireTransport.Create(config.NodeHostConfig{RaftAddress: sid, DeploymentID: did}, t.handleRequest, chunks.Add)
+	t.trans = wireTransport(config.NodeHostConfig{RaftAddress: sid, DeploymentID: did}, t.handleRequest, chunks.Add)
 	t.chunks = chunks
 	plog.Infof("transport type: %s", t.trans.Name())
 	if err := t.trans.Start(); err != nil {

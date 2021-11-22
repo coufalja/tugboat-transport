@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package transport
+package inmem
 
 import (
 	"context"
+	"errors"
 	"sync"
 
-	"github.com/cockroachdb/errors"
 	"github.com/coufalja/tugboat/config"
 	"github.com/coufalja/tugboat/raftio"
 	pb "github.com/coufalja/tugboat/raftpb"
@@ -50,34 +50,18 @@ var (
 	listeningMu sync.Mutex
 )
 
-// ChanTransportFactory is a channel based module used for testing purposes.
-type ChanTransportFactory struct{}
-
-// Create creates a channel based transport instance.
-func (ctm *ChanTransportFactory) Create(nhConfig config.NodeHostConfig,
-	handler raftio.MessageHandler,
-	chunkHandler raftio.ChunkHandler) raftio.ITransport {
-	return NewChanTransport(nhConfig, handler, chunkHandler)
-}
-
-// Validate returns a boolean value indicating whether the specified address
-// is valid.
-func (ctm *ChanTransportFactory) Validate(addr string) bool {
-	panic("not suppose to be called")
-}
-
-// ChanConnection is a channel based connection.
-type ChanConnection struct {
+// Connection is a channel based connection.
+type Connection struct {
 	cc chanConn
 }
 
 // Close ...
-func (cc *ChanConnection) Close() {
+func (cc *Connection) Close() {
 	close(cc.cc.senderClosed)
 }
 
 // SendMessageBatch ...
-func (cc *ChanConnection) SendMessageBatch(batch pb.MessageBatch) error {
+func (cc *Connection) SendMessageBatch(batch pb.MessageBatch) error {
 	if cc.cc.snapshot {
 		panic("sending message on snapshot cc")
 	}
@@ -90,18 +74,18 @@ func (cc *ChanConnection) SendMessageBatch(batch pb.MessageBatch) error {
 	return nil
 }
 
-// ChanSSConnection is a channel based snapshot connection.
-type ChanSSConnection struct {
+// SnapshotConnection is a channel based snapshot connection.
+type SnapshotConnection struct {
 	cc chanConn
 }
 
 // Close ...
-func (csc *ChanSSConnection) Close() {
+func (csc *SnapshotConnection) Close() {
 	close(csc.cc.senderClosed)
 }
 
 // SendChunk ...
-func (csc *ChanSSConnection) SendChunk(chunk pb.Chunk) error {
+func (csc *SnapshotConnection) SendChunk(chunk pb.Chunk) error {
 	if !csc.cc.snapshot {
 		panic("sending snapshot data on regular cc")
 	}
@@ -114,8 +98,8 @@ func (csc *ChanSSConnection) SendChunk(chunk pb.Chunk) error {
 	return nil
 }
 
-// ChanTransport is a channel based transport module used for testing purposes.
-type ChanTransport struct {
+// Transport is a channel based transport module used for testing purposes.
+type Transport struct {
 	nhConfig       config.NodeHostConfig
 	requestHandler raftio.MessageHandler
 	chunkHandler   raftio.ChunkHandler
@@ -126,8 +110,8 @@ type ChanTransport struct {
 // NewChanTransport creates a new channel based test transport module.
 func NewChanTransport(nhConfig config.NodeHostConfig,
 	requestHandler raftio.MessageHandler,
-	chunkHandler raftio.ChunkHandler) raftio.ITransport {
-	return &ChanTransport{
+	chunkHandler raftio.ChunkHandler) *Transport {
+	return &Transport{
 		nhConfig:       nhConfig,
 		requestHandler: requestHandler,
 		chunkHandler:   chunkHandler,
@@ -137,7 +121,7 @@ func NewChanTransport(nhConfig config.NodeHostConfig,
 }
 
 // Start ...
-func (ct *ChanTransport) Start() error {
+func (ct *Transport) Start() error {
 	acc := acceptChanConn{
 		ac:  make(chan chanConn, 1),
 		acc: make(chan struct{}),
@@ -169,18 +153,18 @@ func (ct *ChanTransport) Start() error {
 }
 
 // Close ...
-func (ct *ChanTransport) Close() error {
+func (ct *Transport) Close() error {
 	ct.stopper.Stop()
 	ct.connStopper.Stop()
 	return nil
 }
 
 // Name ...
-func (ct *ChanTransport) Name() string {
-	return "ChanTransport"
+func (ct *Transport) Name() string {
+	return "Transport"
 }
 
-func (ct *ChanTransport) getConnection(target string,
+func (ct *Transport) getConnection(target string,
 	snapshot bool) (chanConn, error) {
 	listeningMu.Lock()
 	defer listeningMu.Unlock()
@@ -198,26 +182,26 @@ func (ct *ChanTransport) getConnection(target string,
 }
 
 // GetConnection ...
-func (ct *ChanTransport) GetConnection(ctx context.Context,
+func (ct *Transport) GetConnection(ctx context.Context,
 	target string) (raftio.IConnection, error) {
 	cc, err := ct.getConnection(target, false)
 	if err != nil {
 		return nil, err
 	}
-	return &ChanConnection{cc: cc}, nil
+	return &Connection{cc: cc}, nil
 }
 
 // GetSnapshotConnection ...
-func (ct *ChanTransport) GetSnapshotConnection(ctx context.Context,
+func (ct *Transport) GetSnapshotConnection(ctx context.Context,
 	target string) (raftio.ISnapshotConnection, error) {
 	cc, err := ct.getConnection(target, true)
 	if err != nil {
 		return nil, err
 	}
-	return &ChanSSConnection{cc: cc}, nil
+	return &SnapshotConnection{cc: cc}, nil
 }
 
-func (ct *ChanTransport) process(data []byte, cc chanConn) bool {
+func (ct *Transport) process(data []byte, cc chanConn) bool {
 	if cc.snapshot {
 		chunk := pb.Chunk{}
 		if err := chunk.Unmarshal(data); err != nil {
@@ -236,7 +220,7 @@ func (ct *ChanTransport) process(data []byte, cc chanConn) bool {
 	return true
 }
 
-func (ct *ChanTransport) serveConn(cc chanConn) {
+func (ct *Transport) serveConn(cc chanConn) {
 	defer close(cc.recverClosed)
 	done := false
 	for !done {

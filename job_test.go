@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/coufalja/tugboat/config"
+	"github.com/coufalja/tugboat-transport/noop"
 	pb "github.com/coufalja/tugboat/raftpb"
 	"github.com/lni/goutils/syncutil"
 	"github.com/lni/vfs"
@@ -26,8 +26,7 @@ import (
 
 func TestSnapshotJobCanBeCreatedInSavedMode(t *testing.T) {
 	fs := vfs.NewStrictMem()
-	cfg := config.NodeHostConfig{}
-	transport := NewNOOPTransport(cfg, nil, nil)
+	transport := noop.NewNOOPTransport()
 	c := newJob(context.Background(), 1, 1, 1, false, 201, transport, nil, fs)
 	if cap(c.ch) != 201 {
 		t.Errorf("unexpected chan length %d, want 201", cap(c.ch))
@@ -36,8 +35,7 @@ func TestSnapshotJobCanBeCreatedInSavedMode(t *testing.T) {
 
 func TestSnapshotJobCanBeCreatedInStreamingMode(t *testing.T) {
 	fs := vfs.NewStrictMem()
-	cfg := config.NodeHostConfig{}
-	transport := NewNOOPTransport(cfg, nil, nil)
+	transport := noop.NewNOOPTransport()
 	c := newJob(context.Background(), 1, 1, 1, true, 201, transport, nil, fs)
 	if cap(c.ch) != streamingChanLength {
 		t.Errorf("unexpected chan length %d, want %d", cap(c.ch), streamingChanLength)
@@ -56,7 +54,7 @@ func TestSendSavedSnapshotPutsAllChunksInCh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get chunks %v", err)
 	}
-	transport := NewNOOPTransport(config.NodeHostConfig{}, nil, nil)
+	transport := noop.NewNOOPTransport()
 	c := newJob(context.Background(), 1, 1, 1, false, len(chunks), transport, nil, fs)
 	if cap(c.ch) != len(chunks) {
 		t.Errorf("unexpected chan length %d", cap(c.ch))
@@ -69,8 +67,7 @@ func TestSendSavedSnapshotPutsAllChunksInCh(t *testing.T) {
 
 func TestKeepSendingChunksUsingFailedJobWillNotBlock(t *testing.T) {
 	fs := vfs.NewStrictMem()
-	cfg := config.NodeHostConfig{}
-	transport := NewNOOPTransport(cfg, nil, nil)
+	transport := noop.NewNOOPTransport()
 	c := newJob(context.Background(), 1, 1, 1, true, 0, transport, nil, fs)
 	if cap(c.ch) != streamingChanLength {
 		t.Errorf("unexpected chan length %d, want %d", cap(c.ch), streamingChanLength)
@@ -83,11 +80,11 @@ func TestKeepSendingChunksUsingFailedJobWillNotBlock(t *testing.T) {
 	stopper.RunWorker(func() {
 		perr = c.process()
 	})
-	noopConn, ok := c.conn.(*NOOPSnapshotConnection)
+	noopConn, ok := c.conn.(*noop.SnapshotConnection)
 	if !ok {
 		t.Fatalf("failed to get noopConn")
 	}
-	noopConn.req.SetToFail(true)
+	noopConn.Req.SetToFail(true)
 	sent, stopped := c.AddChunk(pb.Chunk{})
 	if !sent {
 		t.Fatalf("failed to send")
@@ -112,8 +109,7 @@ func TestKeepSendingChunksUsingFailedJobWillNotBlock(t *testing.T) {
 
 func testSpecialChunkCanStopTheProcessLoop(t *testing.T,
 	tt uint64, experr error, fs vfs.FS) {
-	cfg := config.NodeHostConfig{}
-	transport := NewNOOPTransport(cfg, nil, nil)
+	transport := noop.NewNOOPTransport()
 	c := newJob(context.Background(), 1, 1, 1, true, 0, transport, nil, fs)
 	if err := c.connect("a1"); err != nil {
 		t.Fatalf("connect failed %v", err)

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/coufalja/tugboat"
+	"github.com/coufalja/tugboat-transport/noop"
 	"github.com/coufalja/tugboat-transport/tcp"
 	"github.com/coufalja/tugboat/config"
 	"github.com/coufalja/tugboat/raftio"
@@ -314,29 +315,28 @@ func (h *testMessageHandler) getMessageCount(m map[raftio.NodeInfo]uint64,
 }
 
 func newNOOPTestTransport(handler IMessageHandler, fs vfs.FS) (*Transport,
-	*tugboat.Registry, *NOOPTransport, *noopRequest, *noopConnectRequest) {
+	*tugboat.Registry, *noop.Transport, *noop.Request, *noop.ConnectRequest) {
 	t := newTestSnapshotDir(fs)
 	nodes := tugboat.NewNodeRegistry(streamingChanLength, nil)
 	c := config.NodeHostConfig{
 		MaxSendQueueSize: 256 * 1024 * 1024,
 		RaftAddress:      "localhost:9876",
-		Expert: config.ExpertConfig{
-			TransportFactory: &NOOPTransportFactory{},
-		},
 	}
 	env, err := server.NewEnv(c, fs)
 	if err != nil {
 		panic(err)
 	}
-	transport, err := NewTransport("localhost:9876", 1, &NOOPTransportFactory{}, handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs, 256*1024*1024)
+	transport, err := NewTransport("localhost:9876", 1, func(hostConfig config.NodeHostConfig, handler raftio.MessageHandler, handler2 raftio.ChunkHandler) WireTransport {
+		return noop.NewNOOPTransport()
+	}, handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs, 256*1024*1024)
 	if err != nil {
 		panic(err)
 	}
-	trans, ok := transport.trans.(*NOOPTransport)
+	trans, ok := transport.trans.(*noop.Transport)
 	if !ok {
 		panic("not a noop transport")
 	}
-	return transport, nodes, trans, trans.req, trans.connReq
+	return transport, nodes, trans, trans.Req, trans.ConnReq
 }
 
 func newTestTransport(handler IMessageHandler,
@@ -358,8 +358,9 @@ func newTestTransport(handler IMessageHandler,
 	if err != nil {
 		panic(err)
 	}
-	transport, err := NewTransport("localhost:9876", 1, &tcp.Factory{},
-		handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs, 256*1024*1024)
+	transport, err := NewTransport("localhost:9876", 1, func(hostConfig config.NodeHostConfig, handler raftio.MessageHandler, handler2 raftio.ChunkHandler) WireTransport {
+		return tcp.NewTCPTransport(hostConfig, handler, handler2)
+	}, handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs, 256*1024*1024)
 	if err != nil {
 		panic(err)
 	}
@@ -370,7 +371,7 @@ func newTestTransport(handler IMessageHandler,
 // sudo tc qdisc add dev lo root handle 1:0 netem delay 100msec
 // remove latency
 // sudo tc qdisc del dev lo root
-// don't forget to change your TCP window size if necessary
+// don't forget to change your Transport window size if necessary
 // e.g. in our dev environment, we have -
 // net.core.wmem_max = 25165824
 // net.core.rmem_max = 25165824
@@ -1055,7 +1056,7 @@ func TestInitialMessageCanBeSent(t *testing.T) {
 		t.Errorf("send failed")
 	}
 	for i := 0; i < 1000; i++ {
-		if atomic.LoadUint64(&noopTransport.connected) != 0 {
+		if atomic.LoadUint64(&noopTransport.Connected) != 0 {
 			break
 		}
 		time.Sleep(time.Millisecond)
@@ -1066,8 +1067,8 @@ func TestInitialMessageCanBeSent(t *testing.T) {
 	if len(tt.mu.breakers) != 1 {
 		t.Errorf("breakers len %d, want 1", len(tt.mu.breakers))
 	}
-	if noopTransport.connected != 1 {
-		t.Errorf("connected %d, want 1", noopTransport.connected)
+	if noopTransport.Connected != 1 {
+		t.Errorf("connected %d, want 1", noopTransport.Connected)
 	}
 }
 
@@ -1153,11 +1154,11 @@ func TestCircuitBreakerCauseFailFast(t *testing.T) {
 	if tt.queueSize() != 0 {
 		t.Errorf("queue len %d, want 0", tt.queueSize())
 	}
-	if atomic.LoadUint64(&noopTransport.connected) != 1 {
-		t.Errorf("connected %d, want 1", noopTransport.connected)
+	if atomic.LoadUint64(&noopTransport.Connected) != 1 {
+		t.Errorf("connected %d, want 1", noopTransport.Connected)
 	}
-	if atomic.LoadUint64(&noopTransport.tryConnect) != 1 {
-		t.Errorf("connected %d, want 1", noopTransport.tryConnect)
+	if atomic.LoadUint64(&noopTransport.TryConnect) != 1 {
+		t.Errorf("connected %d, want 1", noopTransport.TryConnect)
 	}
 }
 
@@ -1198,11 +1199,11 @@ func TestCircuitBreakerForResolveNotShared(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if atomic.LoadUint64(&noopTransport.connected) != 1 {
-		t.Errorf("connected %d, want 1", noopTransport.connected)
+	if atomic.LoadUint64(&noopTransport.Connected) != 1 {
+		t.Errorf("connected %d, want 1", noopTransport.Connected)
 	}
-	if atomic.LoadUint64(&noopTransport.tryConnect) != 1 {
-		t.Errorf("connected %d, want 1", noopTransport.tryConnect)
+	if atomic.LoadUint64(&noopTransport.TryConnect) != 1 {
+		t.Errorf("connected %d, want 1", noopTransport.TryConnect)
 	}
 }
 
