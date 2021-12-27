@@ -47,12 +47,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coufalja/tugboat/config"
+	"github.com/coufalja/tugboat-transport/config"
 	"github.com/coufalja/tugboat/logger"
 	"github.com/coufalja/tugboat/raftio"
 	pb "github.com/coufalja/tugboat/raftpb"
 	"github.com/coufalja/tugboat/rate"
-	"github.com/coufalja/tugboat/server"
 	"github.com/lni/goutils/logutil"
 	"github.com/lni/goutils/netutil"
 	circuit "github.com/lni/goutils/netutil/rubyist/circuitbreaker"
@@ -78,20 +77,6 @@ func firstError(err1, err2 error) error {
 		return err1
 	}
 	return err2
-}
-
-// IResolver converts the (cluster id, node id( tuple to network address.
-type IResolver interface {
-	Resolve(uint64, uint64) (string, string, error)
-	Add(uint64, uint64, string)
-}
-
-// IMessageHandler is the interface required to handle incoming raft requests.
-type IMessageHandler interface {
-	HandleMessageBatch(batch pb.MessageBatch) (uint64, uint64)
-	HandleUnreachable(clusterID uint64, nodeID uint64)
-	HandleSnapshotStatus(clusterID uint64, nodeID uint64, rejected bool)
-	HandleSnapshot(clusterID uint64, nodeID uint64, from uint64)
 }
 
 //
@@ -129,12 +114,6 @@ func (sq *sendQueue) decrease(msg pb.Message) {
 	sq.rl.Decrease(pb.GetEntrySliceInMemSize(msg.Entries))
 }
 
-// ITransportEvent is the interface for notifying connection status changes.
-type ITransportEvent interface {
-	ConnectionEstablished(string, bool)
-	ConnectionFailed(string, bool)
-}
-
 type failedSend uint64
 
 type nodeMap map[raftio.NodeInfo]struct{}
@@ -154,18 +133,17 @@ type Transport struct {
 		queues   map[string]sendQueue
 		breakers map[string]*circuit.Breaker
 	}
-	sysEvents        ITransportEvent
+	sysEvents        config.ITransportEvent
 	ctx              context.Context
 	preSendBatch     atomic.Value
 	preSend          atomic.Value
 	postSend         atomic.Value
-	msgHandler       IMessageHandler
-	resolver         IResolver
+	msgHandler       config.IMessageHandler
+	resolver         config.IResolver
 	trans            raftio.ITransport
 	fs               vfs.FS
 	stopper          *syncutil.Stopper
-	dir              server.SnapshotDirFunc
-	env              *server.Env
+	dir              func(clusterID uint64, nodeID uint64) string
 	metrics          Metrics
 	chunks           *Chunk
 	cancel           context.CancelFunc
@@ -176,21 +154,24 @@ type Transport struct {
 }
 
 // NewTransport creates a new Transport object.
-func NewTransport(sid string, did uint64, wireTransport WireTransportFunc, handler IMessageHandler, env *server.Env, resolver IResolver, dir server.SnapshotDirFunc, sysEvents ITransportEvent, fs vfs.FS, maxSendQueueSize uint64) (*Transport, error) {
-	t := &Transport{
-		env:              env,
-		sourceID:         sid,
-		deploymentID:     did,
-		resolver:         resolver,
-		stopper:          syncutil.NewStopper(),
-		dir:              dir,
-		sysEvents:        sysEvents,
-		fs:               fs,
-		msgHandler:       handler,
-		maxSendQueueSize: maxSendQueueSize,
+func NewTransport(cfg *config.Config) (*Transport, error) {
+	if cfg.DeploymentID == 0 {
+		cfg.DeploymentID = 1
 	}
-	chunks := NewChunk(t.handleRequest, t.snapshotReceived, t.dir, did, fs)
-	t.trans = wireTransport(config.NodeHostConfig{RaftAddress: sid, DeploymentID: did}, t.handleRequest, chunks.Add)
+
+	t := &Transport{
+		sourceID:         cfg.RaftAddress,
+		deploymentID:     cfg.DeploymentID,
+		resolver:         cfg.Resolver,
+		stopper:          syncutil.NewStopper(),
+		dir:              cfg.SnapshotDir,
+		sysEvents:        cfg.SysEvents,
+		fs:               cfg.FS,
+		msgHandler:       cfg.MessageHandler,
+		maxSendQueueSize: cfg.MaxSendQueueSize,
+	}
+	chunks := NewChunk(t.handleRequest, t.snapshotReceived, t.dir, cfg.DeploymentID, cfg.FS)
+	t.trans = cfg.WireFactory(cfg.RaftAddress, cfg.DeploymentID, t.handleRequest, chunks.Add)
 	t.chunks = chunks
 	plog.Infof("transport type: %s", t.trans.Name())
 	if err := t.trans.Start(); err != nil {

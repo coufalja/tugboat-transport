@@ -67,7 +67,7 @@ func (t *Transport) GetStreamSink(clusterID uint64, nodeID uint64) pb.IChunkSink
 	return s
 }
 
-func (t *Transport) getStreamSink(clusterID uint64, nodeID uint64) *Sink {
+func (t *Transport) getStreamSink(clusterID uint64, nodeID uint64) pb.IChunkSink {
 	addr, _, err := t.resolver.Resolve(clusterID, nodeID)
 	if err != nil {
 		return nil

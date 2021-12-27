@@ -17,6 +17,7 @@ package transport
 import (
 	"bytes"
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -27,14 +28,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coufalja/tugboat"
+	"github.com/coufalja/tugboat-transport/config"
 	"github.com/coufalja/tugboat-transport/noop"
 	"github.com/coufalja/tugboat-transport/tcp"
-	"github.com/coufalja/tugboat/config"
 	"github.com/coufalja/tugboat/raftio"
 	"github.com/coufalja/tugboat/raftpb"
 	"github.com/coufalja/tugboat/rsm"
-	"github.com/coufalja/tugboat/server"
 	"github.com/lni/goutils/leaktest"
 	"github.com/lni/goutils/netutil"
 	"github.com/lni/goutils/syncutil"
@@ -314,21 +313,22 @@ func (h *testMessageHandler) getMessageCount(m map[raftio.NodeInfo]uint64,
 	return 0
 }
 
-func newNOOPTestTransport(handler IMessageHandler, fs vfs.FS) (*Transport,
-	*tugboat.Registry, *noop.Transport, *noop.Request, *noop.ConnectRequest) {
+func newNOOPTestTransport(handler config.IMessageHandler, fs vfs.FS) (*Transport, *testResolver, *noop.Transport, *noop.Request, *noop.ConnectRequest) {
 	t := newTestSnapshotDir(fs)
-	nodes := tugboat.NewNodeRegistry(streamingChanLength, nil)
-	c := config.NodeHostConfig{
+	resolver := &testResolver{}
+	c := &config.Config{
+		RaftAddress: "localhost:9876",
+		WireFactory: func(s string, u uint64, handler raftio.MessageHandler, handler2 raftio.ChunkHandler) config.WireTransport {
+			return noop.NewNOOPTransport()
+		},
+		MessageHandler:   handler,
+		Resolver:         resolver,
+		SnapshotDir:      t.GetSnapshotRootDir,
+		SysEvents:        &dummyTransportEvent{},
+		FS:               fs,
 		MaxSendQueueSize: 256 * 1024 * 1024,
-		RaftAddress:      "localhost:9876",
 	}
-	env, err := server.NewEnv(c, fs)
-	if err != nil {
-		panic(err)
-	}
-	transport, err := NewTransport("localhost:9876", 1, func(hostConfig config.NodeHostConfig, handler raftio.MessageHandler, handler2 raftio.ChunkHandler) WireTransport {
-		return noop.NewNOOPTransport()
-	}, handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs, 256*1024*1024)
+	transport, err := NewTransport(c)
 	if err != nil {
 		panic(err)
 	}
@@ -336,35 +336,56 @@ func newNOOPTestTransport(handler IMessageHandler, fs vfs.FS) (*Transport,
 	if !ok {
 		panic("not a noop transport")
 	}
-	return transport, nodes, trans, trans.Req, trans.ConnReq
+	return transport, resolver, trans, trans.Req, trans.ConnReq
 }
 
-func newTestTransport(handler IMessageHandler,
-	mutualTLS bool, fs vfs.FS) (*Transport, *tugboat.Registry,
-	*syncutil.Stopper, *testSnapshotDir) {
+type testResolver struct {
+	Addr sync.Map
+}
+
+func (t *testResolver) Resolve(clusterID uint64, nodeID uint64) (string, string, error) {
+	key := raftio.GetNodeInfo(clusterID, nodeID)
+	addr, ok := t.Addr.Load(key)
+	if !ok {
+		return "", "", errors.New("node not found")
+	}
+	return addr.(string), addr.(string), nil
+}
+
+func (t *testResolver) Add(clusterID uint64, nodeID uint64, target string) {
+	key := raftio.GetNodeInfo(clusterID, nodeID)
+	_, _ = t.Addr.LoadOrStore(key, target)
+}
+
+func newTestTransport(handler config.IMessageHandler, mutualTLS bool, fs vfs.FS) (*Transport, *testResolver, *syncutil.Stopper, *testSnapshotDir) {
 	stopper := syncutil.NewStopper()
-	nodes := tugboat.NewNodeRegistry(streamingChanLength, nil)
+	resolver := &testResolver{}
 	t := newTestSnapshotDir(fs)
-	c := config.NodeHostConfig{
+	c := &config.Config{
 		RaftAddress: serverAddress,
+		WireFactory: func(s string, u uint64, handler raftio.MessageHandler, handler2 raftio.ChunkHandler) config.WireTransport {
+			return tcp.NewTCPTransport(tcp.Config{
+				MaxSnapshotSendBytesPerSecond: 256 * 1024 * 1024,
+				MaxSnapshotRecvBytesPerSecond: 256 * 1024 * 1024,
+				MutualTLS:                     mutualTLS,
+				CAFile:                        caFile,
+				CertFile:                      certFile,
+				KeyFile:                       keyFile,
+				RaftAddress:                   serverAddress,
+			}, handler, handler2)
+		},
+		MessageHandler:   handler,
+		Resolver:         resolver,
+		SnapshotDir:      t.GetSnapshotRootDir,
+		SysEvents:        &dummyTransportEvent{},
+		FS:               fs,
+		MaxSendQueueSize: 256 * 1024 * 1024,
 	}
-	if mutualTLS {
-		c.MutualTLS = true
-		c.CAFile = caFile
-		c.CertFile = certFile
-		c.KeyFile = keyFile
-	}
-	env, err := server.NewEnv(c, fs)
+	transport, err := NewTransport(c)
 	if err != nil {
 		panic(err)
 	}
-	transport, err := NewTransport("localhost:9876", 1, func(hostConfig config.NodeHostConfig, handler raftio.MessageHandler, handler2 raftio.ChunkHandler) WireTransport {
-		return tcp.NewTCPTransport(hostConfig, handler, handler2)
-	}, handler, env, nodes, t.GetSnapshotRootDir, &dummyTransportEvent{}, fs, 256*1024*1024)
-	if err != nil {
-		panic(err)
-	}
-	return transport, nodes, stopper, t
+	return transport, resolver, stopper, t
 }
 
 // add some latency to localhost
@@ -381,11 +402,6 @@ func newTestTransport(handler IMessageHandler,
 func testMessageCanBeSentWithLargeLatency(t *testing.T, mutualTLS bool, fs vfs.FS) {
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, _ := newTestTransport(handler, mutualTLS, fs)
-	defer func() {
-		if err := trans.env.Close(); err != nil {
-			t.Fatalf("failed to stop the env %v", err)
-		}
-	}()
 	defer func() {
 		if err := trans.Close(); err != nil {
 			t.Fatalf("failed to close the transport module %v", err)
@@ -430,11 +446,6 @@ func testMessageBatchWithNotMatchedDBVAreDropped(t *testing.T,
 	f SendMessageBatchFunc, mutualTLS bool, fs vfs.FS) {
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, _ := newTestTransport(handler, mutualTLS, fs)
-	defer func() {
-		if err := trans.env.Close(); err != nil {
-			t.Fatalf("failed to stop the env %v", err)
-		}
-	}()
 	defer func() {
 		if err := trans.Close(); err != nil {
 			t.Fatalf("failed to close the transport module %v", err)
@@ -504,11 +515,6 @@ func TestCircuitBreakerKicksInOnConnectivityIssue(t *testing.T) {
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, _ := newTestTransport(handler, false, fs)
 	defer func() {
-		if err := trans.env.Close(); err != nil {
-			t.Fatalf("failed to stop the env %v", err)
-		}
-	}()
-	defer func() {
 		if err := trans.Close(); err != nil {
 			t.Fatalf("failed to close the transport module %v", err)
 		}
@@ -577,11 +583,6 @@ func TestSnapshotCanBeSent(t *testing.T) {
 func testSourceAddressWillBeAddedToNodeRegistry(t *testing.T, mutualTLS bool, fs vfs.FS) {
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, _ := newTestTransport(handler, mutualTLS, fs)
-	defer func() {
-		if err := trans.env.Close(); err != nil {
-			t.Fatalf("failed to stop the env %v", err)
-		}
-	}()
 	defer func() {
 		if err := trans.Close(); err != nil {
 			t.Fatalf("failed to close the transport module %v", err)
@@ -703,11 +704,6 @@ func testSnapshotCanBeSent(t *testing.T,
 			t.Fatalf("%v", err)
 		}
 	}()
-	defer func() {
-		if err := trans.env.Close(); err != nil {
-			t.Fatalf("failed to stop the env %v", err)
-		}
-	}()
 	defer tt.cleanup()
 	defer func() {
 		if err := trans.Close(); err != nil {
@@ -775,11 +771,6 @@ func testSnapshotWithNotMatchedDBVWillBeDropped(t *testing.T,
 	f StreamChunkSendFunc, mutualTLS bool, fs vfs.FS) {
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, tt := newTestTransport(handler, mutualTLS, fs)
-	defer func() {
-		if err := trans.env.Close(); err != nil {
-			t.Fatalf("failed to stop the env %v", err)
-		}
-	}()
 	defer tt.cleanup()
 	defer func() {
 		if err := trans.Close(); err != nil {
@@ -839,11 +830,6 @@ func TestMaxSnapshotConnectionIsLimited(t *testing.T) {
 	fs := vfs.NewStrictMem()
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, tt := newTestTransport(handler, false, fs)
-	defer func() {
-		if err := trans.env.Close(); err != nil {
-			t.Fatalf("failed to stop the env %v", err)
-		}
-	}()
 	defer tt.cleanup()
 	defer func() {
 		if err := trans.Close(); err != nil {
@@ -890,11 +876,6 @@ func testFailedConnectionReportsSnapshotFailure(t *testing.T,
 	snapshotSize := snapshotChunkSize * 10
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, tt := newTestTransport(handler, mutualTLS, fs)
-	defer func() {
-		if err := trans.env.Close(); err != nil {
-			t.Fatalf("failed to stop the env %v", err)
-		}
-	}()
 	defer tt.cleanup()
 	defer func() {
 		if err := trans.Close(); err != nil {
@@ -937,11 +918,6 @@ func testSnapshotWithExternalFilesCanBeSend(t *testing.T,
 	defer func() {
 		if err := fs.RemoveAll(snapshotDir); err != nil {
 			t.Fatalf("%v", err)
-		}
-	}()
-	defer func() {
-		if err := trans.env.Close(); err != nil {
-			t.Fatalf("failed to stop the env %v", err)
 		}
 	}()
 	defer tt.cleanup()
