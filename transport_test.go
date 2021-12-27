@@ -313,7 +313,7 @@ func (h *testMessageHandler) getMessageCount(m map[raftio.NodeInfo]uint64,
 	return 0
 }
 
-func newNOOPTestTransport(handler config.IMessageHandler, fs vfs.FS) (*Transport, *testResolver, *noop.Transport, *noop.Request, *noop.ConnectRequest) {
+func newNOOPTestTransport(handler raftpb.IMessageHandler, fs vfs.FS) (*Transport, *testResolver, *noop.Transport, *noop.Request, *noop.ConnectRequest) {
 	t := newTestSnapshotDir(fs)
 	resolver := &testResolver{}
 	c := &config.Config{
@@ -356,7 +356,7 @@ func (t *testResolver) Add(clusterID uint64, nodeID uint64, target string) {
 	_, _ = t.Addr.LoadOrStore(key, target)
 }
 
-func newTestTransport(handler config.IMessageHandler, mutualTLS bool, fs vfs.FS) (*Transport, *testResolver, *syncutil.Stopper, *testSnapshotDir) {
+func newTestTransport(handler raftpb.IMessageHandler, mutualTLS bool, fs vfs.FS) (*Transport, *testResolver, *syncutil.Stopper, *testSnapshotDir) {
 	stopper := syncutil.NewStopper()
 	resolver := &testResolver{}
 	t := newTestSnapshotDir(fs)

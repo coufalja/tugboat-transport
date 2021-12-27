@@ -39,8 +39,8 @@ github.com/codegangsta/inject v0.0.0-20150114235600-33e0aa1cb7c0/go.mod h1:4Zcju
 github.com/coreos/etcd v3.3.10+incompatible/go.mod h1:uF7uidLiAD3TWHmW31ZFd/JWoc32PjwdhPthX9715RE=
 github.com/coreos/go-etcd v2.0.0+incompatible/go.mod h1:Jez6KQU2B/sWsbdaef3ED8NzMklzPG4d5KIOhIy30Tk=
 github.com/coreos/go-semver v0.2.0/go.mod h1:nnelYz7RCh+5ahJtPPxZlU+153eP4D4r3EedlOD2RNk=
-github.com/coufalja/tugboat v0.0.0-20211227155122-2f11a94d87f9 h1:zhRCATWx/a5MxNerZNhsI12pzmVXZqd9LMYLbpY66I0=
-github.com/coufalja/tugboat v0.0.0-20211227155122-2f11a94d87f9/go.mod h1:JEbNk5GBefYjHPeuT5i/ip7azBQO7+JIofi6KVKwwxU=
+github.com/coufalja/tugboat v0.0.0-20211227163955-9f18a6a74479 h1:nDu8ICi+0OcHGDk9eZjiBAAAH0gQr6kiH4/Q60u9jrk=
+github.com/coufalja/tugboat v0.0.0-20211227163955-9f18a6a74479/go.mod h1:JEbNk5GBefYjHPeuT5i/ip7azBQO7+JIofi6KVKwwxU=
 github.com/cpuguy83/go-md2man v1.0.10/go.mod h1:SmD6nW6nTyfqj6ABTjUi3V3JVMnlJmwcJI5acqYI6dE=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

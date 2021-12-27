@@ -3,7 +3,7 @@ module github.com/coufalja/tugboat-transport
 go 1.17
 
 require (
-	github.com/coufalja/tugboat v0.0.0-20211227155122-2f11a94d87f9
+	github.com/coufalja/tugboat v0.0.0-20211227163955-9f18a6a74479
 	github.com/juju/ratelimit v1.0.1
 	github.com/lni/goutils v1.3.1-0.20210517080819-7f56813dc438
 	github.com/lni/vfs v0.2.0

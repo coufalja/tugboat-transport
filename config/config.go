@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/coufalja/tugboat/raftio"
-	pb "github.com/coufalja/tugboat/raftpb"
 	"github.com/lni/vfs"
 )
 
@@ -12,14 +11,6 @@ import (
 type IResolver interface {
 	Resolve(uint64, uint64) (string, string, error)
 	Add(uint64, uint64, string)
-}
-
-// IMessageHandler is the interface required to handle incoming raft requests.
-type IMessageHandler interface {
-	HandleMessageBatch(batch pb.MessageBatch) (uint64, uint64)
-	HandleUnreachable(clusterID uint64, nodeID uint64)
-	HandleSnapshotStatus(clusterID uint64, nodeID uint64, rejected bool)
-	HandleSnapshot(clusterID uint64, nodeID uint64, from uint64)
 }
 
 // ITransportEvent is the interface for notifying connection status changes.

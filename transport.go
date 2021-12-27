@@ -138,7 +138,7 @@ type Transport struct {
 	preSendBatch     atomic.Value
 	preSend          atomic.Value
 	postSend         atomic.Value
-	msgHandler       config.IMessageHandler
+	msgHandler       pb.IMessageHandler
 	resolver         config.IResolver
 	trans            raftio.ITransport
 	fs               vfs.FS
@@ -154,11 +154,11 @@ type Transport struct {
 }
 
 // NewTransport creates a new Transport object.
-func NewTransport(cfg *config.Config) func(handler config.IMessageHandler) (*Transport, error) {
+func NewTransport(cfg *config.Config) func(handler pb.IMessageHandler) (*Transport, error) {
 	if cfg.DeploymentID == 0 {
 		cfg.DeploymentID = 1
 	}
-	return func(handler config.IMessageHandler) (*Transport, error) {
+	return func(handler pb.IMessageHandler) (*Transport, error) {
 		t := &Transport{
 			sourceID:         cfg.RaftAddress,
 			deploymentID:     cfg.DeploymentID,
