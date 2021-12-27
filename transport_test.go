@@ -321,14 +321,13 @@ func newNOOPTestTransport(handler config.IMessageHandler, fs vfs.FS) (*Transport
 		WireFactory: func(s string, u uint64, handler raftio.MessageHandler, handler2 raftio.ChunkHandler) config.WireTransport {
 			return noop.NewNOOPTransport()
 		},
-		MessageHandler:   handler,
 		Resolver:         resolver,
 		SnapshotDir:      t.GetSnapshotRootDir,
 		SysEvents:        &dummyTransportEvent{},
 		FS:               fs,
 		MaxSendQueueSize: 256 * 1024 * 1024,
 	}
-	transport, err := NewTransport(c)
+	transport, err := NewTransport(c)(handler)
 	if err != nil {
 		panic(err)
 	}
@@ -374,14 +373,13 @@ func newTestTransport(handler config.IMessageHandler, mutualTLS bool, fs vfs.FS)
 				RaftAddress:                   serverAddress,
 			}, handler, handler2)
 		},
-		MessageHandler:   handler,
 		Resolver:         resolver,
 		SnapshotDir:      t.GetSnapshotRootDir,
 		SysEvents:        &dummyTransportEvent{},
 		FS:               fs,
 		MaxSendQueueSize: 256 * 1024 * 1024,
 	}
-	transport, err := NewTransport(c)
+	transport, err := NewTransport(c)(handler)
 	if err != nil {
 		panic(err)
 	}

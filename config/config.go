@@ -66,7 +66,6 @@ type Config struct {
 	RaftAddress      string
 	DeploymentID     uint64
 	WireFactory      WireTransportFunc
-	MessageHandler   IMessageHandler
 	Resolver         IResolver
 	SnapshotDir      func(clusterID uint64, nodeID uint64) string
 	SysEvents        ITransportEvent

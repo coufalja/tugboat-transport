@@ -154,50 +154,51 @@ type Transport struct {
 }
 
 // NewTransport creates a new Transport object.
-func NewTransport(cfg *config.Config) (*Transport, error) {
+func NewTransport(cfg *config.Config) func(handler config.IMessageHandler) (*Transport, error) {
 	if cfg.DeploymentID == 0 {
 		cfg.DeploymentID = 1
 	}
-
-	t := &Transport{
-		sourceID:         cfg.RaftAddress,
-		deploymentID:     cfg.DeploymentID,
-		resolver:         cfg.Resolver,
-		stopper:          syncutil.NewStopper(),
-		dir:              cfg.SnapshotDir,
-		sysEvents:        cfg.SysEvents,
-		fs:               cfg.FS,
-		msgHandler:       cfg.MessageHandler,
-		maxSendQueueSize: cfg.MaxSendQueueSize,
-	}
-	chunks := NewChunk(t.handleRequest, t.snapshotReceived, t.dir, cfg.DeploymentID, cfg.FS)
-	t.trans = cfg.WireFactory(cfg.RaftAddress, cfg.DeploymentID, t.handleRequest, chunks.Add)
-	t.chunks = chunks
-	plog.Infof("transport type: %s", t.trans.Name())
-	if err := t.trans.Start(); err != nil {
-		plog.Errorf("transport failed to start %v", err)
-		if cerr := t.trans.Close(); cerr != nil {
-			plog.Errorf("failed to close the transport module %v", cerr)
+	return func(handler config.IMessageHandler) (*Transport, error) {
+		t := &Transport{
+			sourceID:         cfg.RaftAddress,
+			deploymentID:     cfg.DeploymentID,
+			resolver:         cfg.Resolver,
+			stopper:          syncutil.NewStopper(),
+			dir:              cfg.SnapshotDir,
+			sysEvents:        cfg.SysEvents,
+			fs:               cfg.FS,
+			msgHandler:       handler,
+			maxSendQueueSize: cfg.MaxSendQueueSize,
 		}
-		return nil, err
-	}
-	t.stopper.RunWorker(func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				chunks.Tick()
-			case <-t.stopper.ShouldStop():
-				return
+		chunks := NewChunk(t.handleRequest, t.snapshotReceived, t.dir, cfg.DeploymentID, cfg.FS)
+		t.trans = cfg.WireFactory(cfg.RaftAddress, cfg.DeploymentID, t.handleRequest, chunks.Add)
+		t.chunks = chunks
+		plog.Infof("transport type: %s", t.trans.Name())
+		if err := t.trans.Start(); err != nil {
+			plog.Errorf("transport failed to start %v", err)
+			if cerr := t.trans.Close(); cerr != nil {
+				plog.Errorf("failed to close the transport module %v", cerr)
 			}
+			return nil, err
 		}
-	})
-	t.ctx, t.cancel = context.WithCancel(context.Background())
-	t.mu.queues = make(map[string]sendQueue)
-	t.mu.breakers = make(map[string]*circuit.Breaker)
-	t.metrics = &NOOPMetrics{}
-	return t, nil
+		t.stopper.RunWorker(func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					chunks.Tick()
+				case <-t.stopper.ShouldStop():
+					return
+				}
+			}
+		})
+		t.ctx, t.cancel = context.WithCancel(context.Background())
+		t.mu.queues = make(map[string]sendQueue)
+		t.mu.breakers = make(map[string]*circuit.Breaker)
+		t.metrics = &NOOPMetrics{}
+		return t, nil
+	}
 }
 
 // Name returns the type name of the transport module.
