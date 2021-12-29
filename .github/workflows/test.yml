@@ -1,7 +1,7 @@
 on: [ push, pull_request ]
 name: Test
 jobs:
-  tcp-unit-test:
+  unit-test:
     runs-on: ubuntu-18.04
     steps:
     - name: Install Go
@@ -13,4 +13,4 @@ jobs:
       uses: actions/checkout@v2
     - name: Test
       run: |
-        cd tcp && go test -v ./...
+        go test -v ./...
