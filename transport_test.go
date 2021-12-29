@@ -30,7 +30,6 @@ import (
 
 	"github.com/coufalja/tugboat-transport/config"
 	"github.com/coufalja/tugboat-transport/noop"
-	"github.com/coufalja/tugboat-transport/tcp"
 	"github.com/coufalja/tugboat/raftio"
 	"github.com/coufalja/tugboat/raftpb"
 	"github.com/coufalja/tugboat/rsm"
@@ -317,24 +316,17 @@ func newNOOPTestTransport(handler raftpb.IMessageHandler, fs vfs.FS) (*Transport
 	t := newTestSnapshotDir(fs)
 	resolver := &testResolver{}
 	c := &config.Config{
-		RaftAddress: "localhost:9876",
-		WireFactory: func(s string, u uint64, handler raftio.MessageHandler, handler2 raftio.ChunkHandler) config.WireTransport {
-			return noop.NewNOOPTransport()
-		},
+		RaftAddress:      "localhost:9876",
 		Resolver:         resolver,
-		SnapshotDir:      t.GetSnapshotRootDir,
-		SysEvents:        &dummyTransportEvent{},
 		FS:               fs,
 		MaxSendQueueSize: 256 * 1024 * 1024,
 	}
-	transport, err := NewTransport(c)(handler)
+	transport, err := Factory(c)(handler, &dummyTransportEvent{}, t.GetSnapshotRootDir)
 	if err != nil {
 		panic(err)
 	}
-	trans, ok := transport.trans.(*noop.Transport)
-	if !ok {
-		panic("not a noop transport")
-	}
+	trans := noop.NewNOOPTransport()
+	transport.trans = trans
 	return transport, resolver, trans, trans.Req, trans.ConnReq
 }
 
@@ -361,25 +353,18 @@ func newTestTransport(handler raftpb.IMessageHandler, mutualTLS bool, fs vfs.FS)
 	resolver := &testResolver{}
 	t := newTestSnapshotDir(fs)
 	c := &config.Config{
-		RaftAddress: serverAddress,
-		WireFactory: func(s string, u uint64, handler raftio.MessageHandler, handler2 raftio.ChunkHandler) config.WireTransport {
-			return tcp.NewTCPTransport(tcp.Config{
-				MaxSnapshotSendBytesPerSecond: 256 * 1024 * 1024,
-				MaxSnapshotRecvBytesPerSecond: 256 * 1024 * 1024,
-				MutualTLS:                     mutualTLS,
-				CAFile:                        caFile,
-				CertFile:                      certFile,
-				KeyFile:                       keyFile,
-				RaftAddress:                   serverAddress,
-			}, handler, handler2)
-		},
-		Resolver:         resolver,
-		SnapshotDir:      t.GetSnapshotRootDir,
-		SysEvents:        &dummyTransportEvent{},
-		FS:               fs,
-		MaxSendQueueSize: 256 * 1024 * 1024,
+		RaftAddress:                   serverAddress,
+		MaxSnapshotSendBytesPerSecond: 256 * 1024 * 1024,
+		MaxSnapshotRecvBytesPerSecond: 256 * 1024 * 1024,
+		MutualTLS:                     mutualTLS,
+		CAFile:                        caFile,
+		CertFile:                      certFile,
+		KeyFile:                       keyFile,
+		Resolver:                      resolver,
+		FS:                            fs,
+		MaxSendQueueSize:              256 * 1024 * 1024,
 	}
-	transport, err := NewTransport(c)(handler)
+	transport, err := Factory(c)(handler, &dummyTransportEvent{}, t.GetSnapshotRootDir)
 	if err != nil {
 		panic(err)
 	}
@@ -716,7 +701,7 @@ func testSnapshotCanBeSent(t *testing.T,
 	m := getTestSnapshotMessage(2)
 	m.Snapshot.FileSize = getTestSnapshotFileSize(sz)
 	dir := tt.GetSnapshotDir(100, 12, testSnapshotIndex)
-	chunks := NewChunk(trans.handleRequest,
+	chunks := newChunk(trans.handleRequest,
 		trans.snapshotReceived, trans.dir, trans.deploymentID, fs)
 	snapDir := chunks.dir(100, 2)
 	if err := fs.MkdirAll(snapDir, 0o755); err != nil {
@@ -925,7 +910,7 @@ func testSnapshotWithExternalFilesCanBeSend(t *testing.T,
 		}
 	}()
 	defer stopper.Stop()
-	chunks := NewChunk(trans.handleRequest,
+	chunks := newChunk(trans.handleRequest,
 		trans.snapshotReceived, trans.dir, trans.deploymentID, fs)
 	ts := getTestChunk()
 	snapDir := chunks.dir(ts[0].ClusterId, ts[0].NodeId)

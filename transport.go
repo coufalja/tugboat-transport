@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"github.com/coufalja/tugboat-transport/config"
+	"github.com/coufalja/tugboat-transport/tcp"
 	"github.com/coufalja/tugboat/logger"
 	"github.com/coufalja/tugboat/raftio"
 	pb "github.com/coufalja/tugboat/raftpb"
@@ -153,25 +154,31 @@ type Transport struct {
 	maxSendQueueSize uint64
 }
 
-// NewTransport creates a new Transport object.
-func NewTransport(cfg *config.Config) func(handler pb.IMessageHandler) (*Transport, error) {
-	if cfg.DeploymentID == 0 {
-		cfg.DeploymentID = 1
-	}
-	return func(handler pb.IMessageHandler) (*Transport, error) {
+// Factory creates a new Transport object.
+func Factory(cfg *config.Config) func(pb.IMessageHandler, pb.ITransportEvent, func(uint64, uint64) string) (*Transport, error) {
+	return func(handler pb.IMessageHandler, event pb.ITransportEvent, dir func(cid uint64, nid uint64) string) (*Transport, error) {
 		t := &Transport{
 			sourceID:         cfg.RaftAddress,
 			deploymentID:     cfg.DeploymentID,
 			resolver:         cfg.Resolver,
 			stopper:          syncutil.NewStopper(),
-			dir:              cfg.SnapshotDir,
-			sysEvents:        cfg.SysEvents,
+			dir:              dir,
+			sysEvents:        event,
 			fs:               cfg.FS,
 			msgHandler:       handler,
 			maxSendQueueSize: cfg.MaxSendQueueSize,
 		}
-		chunks := NewChunk(t.handleRequest, t.snapshotReceived, t.dir, cfg.DeploymentID, cfg.FS)
-		t.trans = cfg.WireFactory(cfg.RaftAddress, cfg.DeploymentID, t.handleRequest, chunks.Add)
+		chunks := newChunk(t.handleRequest, t.snapshotReceived, t.dir, cfg.DeploymentID, cfg.FS)
+		t.trans = tcp.NewTCPTransport(tcp.Config{
+			MaxSnapshotSendBytesPerSecond: cfg.MaxSnapshotSendBytesPerSecond,
+			MaxSnapshotRecvBytesPerSecond: cfg.MaxSnapshotRecvBytesPerSecond,
+			MutualTLS:                     cfg.MutualTLS,
+			CAFile:                        cfg.CAFile,
+			CertFile:                      cfg.CertFile,
+			KeyFile:                       cfg.KeyFile,
+			RaftAddress:                   cfg.RaftAddress,
+			ListenAddress:                 cfg.ListenAddress,
+		}, t.handleRequest, chunks.Add)
 		t.chunks = chunks
 		plog.Infof("transport type: %s", t.trans.Name())
 		if err := t.trans.Start(); err != nil {

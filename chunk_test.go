@@ -92,7 +92,7 @@ func runChunkTest(t *testing.T,
 	}()
 	defer stopper.Stop()
 	defer tt.cleanup()
-	chunks := NewChunk(trans.handleRequest,
+	chunks := newChunk(trans.handleRequest,
 		trans.snapshotReceived, trans.dir, trans.deploymentID, fs)
 	ts := getTestChunk()
 	snapDir := chunks.dir(ts[0].ClusterId, ts[0].NodeId)

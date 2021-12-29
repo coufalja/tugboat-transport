@@ -78,8 +78,8 @@ type Chunk struct {
 	validate  bool
 }
 
-// NewChunk creates and returns a new snapshot chunks instance.
-func NewChunk(onReceive func(pb.MessageBatch),
+// newChunk creates and returns a new snapshot chunks instance.
+func newChunk(onReceive func(pb.MessageBatch),
 	confirm func(uint64, uint64, uint64), dir server.SnapshotDirFunc,
 	did uint64, fs vfs.FS) *Chunk {
 	return &Chunk{
