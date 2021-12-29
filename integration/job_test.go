@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package transport
+package integration
 
 import (
 	"context"
@@ -20,25 +20,26 @@ import (
 
 	"github.com/coufalja/tugboat-transport/noop"
 	pb "github.com/coufalja/tugboat/raftpb"
+	"github.com/coufalja/tugboat/transport"
 	"github.com/lni/goutils/syncutil"
 	"github.com/lni/vfs"
 )
 
 func TestSnapshotJobCanBeCreatedInSavedMode(t *testing.T) {
 	fs := vfs.NewStrictMem()
-	transport := noop.NewNOOPTransport()
-	c := newJob(context.Background(), 1, 1, 1, false, 201, transport, nil, fs)
-	if cap(c.ch) != 201 {
-		t.Errorf("unexpected chan length %d, want 201", cap(c.ch))
+	tr := noop.New()
+	c := transport.NewJob(context.Background(), 1, 1, 1, false, 201, tr, nil, fs)
+	if cap(c.Stream) != 201 {
+		t.Errorf("unexpected chan length %d, want 201", cap(c.Stream))
 	}
 }
 
 func TestSnapshotJobCanBeCreatedInStreamingMode(t *testing.T) {
 	fs := vfs.NewStrictMem()
-	transport := noop.NewNOOPTransport()
-	c := newJob(context.Background(), 1, 1, 1, true, 201, transport, nil, fs)
-	if cap(c.ch) != streamingChanLength {
-		t.Errorf("unexpected chan length %d, want %d", cap(c.ch), streamingChanLength)
+	tr := noop.New()
+	c := transport.NewJob(context.Background(), 1, 1, 1, true, 201, tr, nil, fs)
+	if cap(c.Stream) != transport.StreamingChanLength {
+		t.Errorf("unexpected chan length %d, want %d", cap(c.Stream), transport.StreamingChanLength)
 	}
 }
 
@@ -50,44 +51,44 @@ func TestSendSavedSnapshotPutsAllChunksInCh(t *testing.T) {
 			FileSize: 1024 * 1024 * 512,
 		},
 	}
-	chunks, err := splitSnapshotMessage(m)
+	chunks, err := transport.SplitSnapshotMessage(m)
 	if err != nil {
 		t.Fatalf("failed to get chunks %v", err)
 	}
-	transport := noop.NewNOOPTransport()
-	c := newJob(context.Background(), 1, 1, 1, false, len(chunks), transport, nil, fs)
-	if cap(c.ch) != len(chunks) {
-		t.Errorf("unexpected chan length %d", cap(c.ch))
+	tr := noop.New()
+	c := transport.NewJob(context.Background(), 1, 1, 1, false, len(chunks), tr, nil, fs)
+	if cap(c.Stream) != len(chunks) {
+		t.Errorf("unexpected chan length %d", cap(c.Stream))
 	}
-	c.addSnapshot(chunks)
-	if len(c.ch) != len(chunks) {
-		t.Errorf("not all chunks pushed to ch")
+	c.AddSnapshot(chunks)
+	if len(c.Stream) != len(chunks) {
+		t.Errorf("not all chunks pushed to Stream")
 	}
 }
 
 func TestKeepSendingChunksUsingFailedJobWillNotBlock(t *testing.T) {
 	fs := vfs.NewStrictMem()
-	transport := noop.NewNOOPTransport()
-	c := newJob(context.Background(), 1, 1, 1, true, 0, transport, nil, fs)
-	if cap(c.ch) != streamingChanLength {
-		t.Errorf("unexpected chan length %d, want %d", cap(c.ch), streamingChanLength)
+	tr := noop.New()
+	c := transport.NewJob(context.Background(), 1, 1, 1, true, 0, tr, nil, fs)
+	if cap(c.Stream) != transport.StreamingChanLength {
+		t.Errorf("unexpected chan length %d, want %d", cap(c.Stream), transport.StreamingChanLength)
 	}
-	if err := c.connect("a1"); err != nil {
+	if err := c.Connect("a1"); err != nil {
 		t.Fatalf("connect failed %v", err)
 	}
 	stopper := syncutil.NewStopper()
 	var perr error
 	stopper.RunWorker(func() {
-		perr = c.process()
+		perr = c.Process()
 	})
-	noopConn, ok := c.conn.(*noop.SnapshotConnection)
+	noopConn, ok := c.Conn.(*noop.SnapshotConnection)
 	if !ok {
 		t.Fatalf("failed to get noopConn")
 	}
 	noopConn.Req.SetToFail(true)
 	sent, stopped := c.AddChunk(pb.Chunk{})
 	if !sent {
-		t.Fatalf("failed to send")
+		t.Fatalf("failed to SendResult")
 	}
 	if stopped {
 		t.Errorf("unexpectedly stopped")
@@ -96,35 +97,30 @@ func TestKeepSendingChunksUsingFailedJobWillNotBlock(t *testing.T) {
 	if perr == nil {
 		t.Fatalf("error didn't return from process()")
 	}
-	for i := 0; i < streamingChanLength*10; i++ {
+	for i := 0; i < transport.StreamingChanLength*10; i++ {
 		c.AddChunk(pb.Chunk{})
 	}
-	select {
-	case <-c.failed:
-	default:
-		t.Fatalf("failed chan not closed")
-	}
-	c.close()
+	c.Close()
 }
 
 func testSpecialChunkCanStopTheProcessLoop(t *testing.T,
 	tt uint64, experr error, fs vfs.FS) {
-	transport := noop.NewNOOPTransport()
-	c := newJob(context.Background(), 1, 1, 1, true, 0, transport, nil, fs)
-	if err := c.connect("a1"); err != nil {
+	tr := noop.New()
+	c := transport.NewJob(context.Background(), 1, 1, 1, true, 0, tr, nil, fs)
+	if err := c.Connect("a1"); err != nil {
 		t.Fatalf("connect failed %v", err)
 	}
 	stopper := syncutil.NewStopper()
 	var perr error
 	stopper.RunWorker(func() {
-		perr = c.process()
+		perr = c.Process()
 	})
 	poison := pb.Chunk{
 		ChunkCount: tt,
 	}
 	sent, stopped := c.AddChunk(poison)
 	if !sent {
-		t.Fatalf("failed to send")
+		t.Fatalf("failed to SendResult")
 	}
 	if stopped {
 		t.Errorf("unexpectedly stopped")
@@ -138,7 +134,7 @@ func testSpecialChunkCanStopTheProcessLoop(t *testing.T,
 func TestPoisonChunkCanStopTheProcessLoop(t *testing.T) {
 	fs := vfs.NewStrictMem()
 	testSpecialChunkCanStopTheProcessLoop(t,
-		pb.PoisonChunkCount, ErrStreamSnapshot, fs)
+		pb.PoisonChunkCount, transport.ErrStreamSnapshot, fs)
 }
 
 func TestLastChunkCanStopTheProcessLoop(t *testing.T) {

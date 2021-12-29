@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package transport
+package integration
 
 import (
 	"bytes"
@@ -28,11 +28,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coufalja/tugboat-transport/config"
 	"github.com/coufalja/tugboat-transport/noop"
+	"github.com/coufalja/tugboat-transport/tcp"
+	"github.com/coufalja/tugboat/config"
 	"github.com/coufalja/tugboat/raftio"
 	"github.com/coufalja/tugboat/raftpb"
 	"github.com/coufalja/tugboat/rsm"
+	"github.com/coufalja/tugboat/transport"
 	"github.com/lni/goutils/leaktest"
 	"github.com/lni/goutils/netutil"
 	"github.com/lni/goutils/syncutil"
@@ -312,22 +314,21 @@ func (h *testMessageHandler) getMessageCount(m map[raftio.NodeInfo]uint64,
 	return 0
 }
 
-func newNOOPTestTransport(handler raftpb.IMessageHandler, fs vfs.FS) (*Transport, *testResolver, *noop.Transport, *noop.Request, *noop.ConnectRequest) {
+func newNOOPTestTransport(handler raftpb.IMessageHandler, fs vfs.FS) (*transport.Transport[*noop.Transport], *testResolver, *noop.Transport, *noop.Request, *noop.ConnectRequest) {
 	t := newTestSnapshotDir(fs)
 	resolver := &testResolver{}
-	c := &config.Config{
-		RaftAddress:      "localhost:9876",
-		Resolver:         resolver,
-		FS:               fs,
+	c := config.NodeHostConfig{
+		RaftAddress:      serverAddress,
 		MaxSendQueueSize: 256 * 1024 * 1024,
 	}
-	transport, err := Factory(c)(handler, &dummyTransportEvent{}, t.GetSnapshotRootDir)
+	c.Prepare()
+	c.Expert.FS = fs
+	tr, err := transport.Factory(c, resolver, handler, &dummyTransportEvent{}, t.GetSnapshotRootDir, noop.Factory())
 	if err != nil {
 		panic(err)
 	}
-	trans := noop.NewNOOPTransport()
-	transport.trans = trans
-	return transport, resolver, trans, trans.Req, trans.ConnReq
+	trans := tr.GetTrans()
+	return tr, resolver, trans, trans.Req, trans.ConnReq
 }
 
 type testResolver struct {
@@ -348,11 +349,17 @@ func (t *testResolver) Add(clusterID uint64, nodeID uint64, target string) {
 	_, _ = t.Addr.LoadOrStore(key, target)
 }
 
-func newTestTransport(handler raftpb.IMessageHandler, mutualTLS bool, fs vfs.FS) (*Transport, *testResolver, *syncutil.Stopper, *testSnapshotDir) {
+func newTestTransport(handler raftpb.IMessageHandler, mutualTLS bool, fs vfs.FS) (*transport.Transport[*tcp.Transport], *testResolver, *syncutil.Stopper, *testSnapshotDir) {
 	stopper := syncutil.NewStopper()
 	resolver := &testResolver{}
 	t := newTestSnapshotDir(fs)
-	c := &config.Config{
+	c := config.NodeHostConfig{
+		RaftAddress:      serverAddress,
+		MaxSendQueueSize: 256 * 1024 * 1024,
+	}
+	c.Prepare()
+	c.Expert.FS = fs
+	tr, err := transport.Factory(c, resolver, handler, &dummyTransportEvent{}, t.GetSnapshotRootDir, tcp.Factory(tcp.Config{
 		RaftAddress:                   serverAddress,
 		MaxSnapshotSendBytesPerSecond: 256 * 1024 * 1024,
 		MaxSnapshotRecvBytesPerSecond: 256 * 1024 * 1024,
@@ -360,15 +367,11 @@ func newTestTransport(handler raftpb.IMessageHandler, mutualTLS bool, fs vfs.FS)
 		CAFile:                        caFile,
 		CertFile:                      certFile,
 		KeyFile:                       keyFile,
-		Resolver:                      resolver,
-		FS:                            fs,
-		MaxSendQueueSize:              256 * 1024 * 1024,
-	}
-	transport, err := Factory(c)(handler, &dummyTransportEvent{}, t.GetSnapshotRootDir)
+	}))
 	if err != nil {
 		panic(err)
 	}
-	return transport, resolver, stopper, t
+	return tr, resolver, stopper, t
 }
 
 // add some latency to localhost
@@ -425,8 +428,7 @@ func TestMessageCanBeSentWithLargeLatency(t *testing.T) {
 	testMessageCanBeSentWithLargeLatency(t, false, fs)
 }
 
-func testMessageBatchWithNotMatchedDBVAreDropped(t *testing.T,
-	f SendMessageBatchFunc, mutualTLS bool, fs vfs.FS) {
+func testMessageBatchWithNotMatchedDBVAreDropped(t *testing.T, f transport.SendMessageBatchFunc, mutualTLS bool, fs vfs.FS) {
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, _ := newTestTransport(handler, mutualTLS, fs)
 	defer func() {
@@ -486,12 +488,6 @@ func TestCircuitBreaker(t *testing.T) {
 	}
 }
 
-func (t *Transport) queueSize() int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return len(t.mu.queues)
-}
-
 func TestCircuitBreakerKicksInOnConnectivityIssue(t *testing.T) {
 	fs := vfs.NewStrictMem()
 	defer leaktest.AfterTest(t)()
@@ -515,7 +511,7 @@ func TestCircuitBreakerKicksInOnConnectivityIssue(t *testing.T) {
 		t.Errorf("not suppose to fail")
 	}
 	for {
-		if trans.queueSize() == 0 {
+		if trans.QueueSize() == 0 {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -554,12 +550,12 @@ func TestSnapshotCanBeSent(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	mutualTLSValues := []bool{true, false}
 	for _, v := range mutualTLSValues {
-		testSnapshotCanBeSent(t, snapshotChunkSize-1, 10000, v, fs)
-		testSnapshotCanBeSent(t, snapshotChunkSize/2, 10000, v, fs)
-		testSnapshotCanBeSent(t, snapshotChunkSize+1, 10000, v, fs)
-		testSnapshotCanBeSent(t, snapshotChunkSize*3, 10000, v, fs)
-		testSnapshotCanBeSent(t, snapshotChunkSize*3+1, 10000, v, fs)
-		testSnapshotCanBeSent(t, snapshotChunkSize*3-1, 10000, v, fs)
+		testSnapshotCanBeSent(t, transport.SnapshotChunkSize-1, 10000, v, fs)
+		testSnapshotCanBeSent(t, transport.SnapshotChunkSize/2, 10000, v, fs)
+		testSnapshotCanBeSent(t, transport.SnapshotChunkSize+1, 10000, v, fs)
+		testSnapshotCanBeSent(t, transport.SnapshotChunkSize*3, 10000, v, fs)
+		testSnapshotCanBeSent(t, transport.SnapshotChunkSize*3+1, 10000, v, fs)
+		testSnapshotCanBeSent(t, transport.SnapshotChunkSize*3-1, 10000, v, fs)
 	}
 }
 
@@ -678,8 +674,7 @@ type noopCompactor struct{}
 
 func (noopCompactor) Compact(uint64) error { return nil }
 
-func testSnapshotCanBeSent(t *testing.T,
-	sz uint64, maxWait uint64, mutualTLS bool, fs vfs.FS) {
+func testSnapshotCanBeSent(t *testing.T, sz uint64, maxWait uint64, mutualTLS bool, fs vfs.FS) {
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, tt := newTestTransport(handler, mutualTLS, fs)
 	defer func() {
@@ -695,31 +690,29 @@ func testSnapshotCanBeSent(t *testing.T,
 	}()
 	defer stopper.Stop()
 	nodes.Add(100, 2, serverAddress)
-	plog.Infof("going to generate snapshot file")
+	t.Logf("going to generate snapshot file")
 	tt.generateSnapshotFile(100, 12, testSnapshotIndex, "testsnapshot.gbsnap", sz, fs)
-	plog.Infof("snapshot file created")
+	t.Logf("snapshot file created")
 	m := getTestSnapshotMessage(2)
 	m.Snapshot.FileSize = getTestSnapshotFileSize(sz)
 	dir := tt.GetSnapshotDir(100, 12, testSnapshotIndex)
-	chunks := newChunk(trans.handleRequest,
-		trans.snapshotReceived, trans.dir, trans.deploymentID, fs)
-	snapDir := chunks.dir(100, 2)
+	snapDir := trans.GetSnapshotDirFunc()(100, 2)
 	if err := fs.MkdirAll(snapDir, 0o755); err != nil {
 		t.Fatalf("%v", err)
 	}
 	m.Snapshot.Filepath = fs.PathJoin(dir, "testsnapshot.gbsnap")
 	// send the snapshot file
-	plog.Infof("send snapshot will be called")
+	t.Logf("send snapshot will be called")
 	done := trans.SendSnapshot(m)
-	plog.Infof("send snapshot returned")
+	t.Logf("send snapshot returned")
 	if !done {
 		t.Errorf("failed to send the snapshot")
 	}
-	plog.Infof("waiting for snapshot status update")
+	t.Logf("waiting for snapshot status update")
 	waitForFirstSnapshotStatusUpdate(handler, maxWait)
-	plog.Infof("waiting for snapshot count update")
+	t.Logf("waiting for snapshot count update")
 	waitForSnapshotCountUpdate(handler, maxWait)
-	plog.Infof("snapshot count updated")
+	t.Logf("snapshot count updated")
 	if handler.getSnapshotCount(100, 2) != 1 {
 		t.Errorf("got %d, want %d", handler.getSnapshotCount(100, 2), 1)
 	}
@@ -750,8 +743,7 @@ func testSnapshotCanBeSent(t *testing.T,
 	}
 }
 
-func testSnapshotWithNotMatchedDBVWillBeDropped(t *testing.T,
-	f StreamChunkSendFunc, mutualTLS bool, fs vfs.FS) {
+func testSnapshotWithNotMatchedDBVWillBeDropped(t *testing.T, f transport.StreamChunkSendFunc, mutualTLS bool, fs vfs.FS) {
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, tt := newTestTransport(handler, mutualTLS, fs)
 	defer tt.cleanup()
@@ -822,23 +814,23 @@ func TestMaxSnapshotConnectionIsLimited(t *testing.T) {
 	defer stopper.Stop()
 	nodes.Add(100, 2, serverAddress)
 	conns := make([]raftpb.IChunkSink, 0)
-	for i := uint64(0); i < maxConnectionCount; i++ {
+	for i := uint64(0); i < transport.MaxConnectionCount; i++ {
 		sink := trans.GetStreamSink(100, 2)
 		if sink == nil {
 			t.Errorf("failed to get sink")
 		}
 		conns = append(conns, sink)
 	}
-	for i := uint64(0); i < maxConnectionCount; i++ {
+	for i := uint64(0); i < transport.MaxConnectionCount; i++ {
 		if sink := trans.GetStreamSink(100, 2); sink != nil {
 			t.Errorf("connection is not limited")
 		}
 	}
 	for _, v := range conns {
-		close(v.(*Sink).j.ch)
+		close(v.(*transport.Sink).J.Stream)
 	}
 	for {
-		if atomic.LoadUint64(&trans.jobs) != 0 {
+		if trans.JobsCount() != 0 {
 			time.Sleep(time.Millisecond)
 		} else {
 			break
@@ -846,8 +838,8 @@ func TestMaxSnapshotConnectionIsLimited(t *testing.T) {
 	}
 	breaker := trans.GetCircuitBreaker(serverAddress)
 	breaker.Reset()
-	plog.Infof("circuit breaker for %s is now ready", serverAddress)
-	for i := uint64(0); i < maxConnectionCount; i++ {
+	t.Logf("circuit breaker for %s is now ready", serverAddress)
+	for i := uint64(0); i < transport.MaxConnectionCount; i++ {
 		if sink := trans.GetStreamSink(100, 2); sink == nil {
 			t.Fatalf("failed to get sink again %d", i)
 		}
@@ -856,7 +848,7 @@ func TestMaxSnapshotConnectionIsLimited(t *testing.T) {
 
 func testFailedConnectionReportsSnapshotFailure(t *testing.T,
 	mutualTLS bool, fs vfs.FS) {
-	snapshotSize := snapshotChunkSize * 10
+	snapshotSize := transport.SnapshotChunkSize * 10
 	handler := newTestMessageHandler()
 	trans, nodes, stopper, tt := newTestTransport(handler, mutualTLS, fs)
 	defer tt.cleanup()
@@ -910,10 +902,7 @@ func testSnapshotWithExternalFilesCanBeSend(t *testing.T,
 		}
 	}()
 	defer stopper.Stop()
-	chunks := newChunk(trans.handleRequest,
-		trans.snapshotReceived, trans.dir, trans.deploymentID, fs)
-	ts := getTestChunk()
-	snapDir := chunks.dir(ts[0].ClusterId, ts[0].NodeId)
+	snapDir := trans.GetSnapshotDirFunc()(100, 2)
 	if err := fs.MkdirAll(snapDir, 0o755); err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -976,10 +965,10 @@ func testSnapshotWithExternalFilesCanBeSend(t *testing.T,
 
 func TestSnapshotWithExternalFilesCanBeSend(t *testing.T) {
 	fs := vfs.NewStrictMem()
-	testSnapshotWithExternalFilesCanBeSend(t, snapshotChunkSize/2, 3000, false, fs)
-	testSnapshotWithExternalFilesCanBeSend(t, snapshotChunkSize*3+100, 3000, false, fs)
-	testSnapshotWithExternalFilesCanBeSend(t, snapshotChunkSize/2, 3000, true, fs)
-	testSnapshotWithExternalFilesCanBeSend(t, snapshotChunkSize*3+100, 3000, true, fs)
+	testSnapshotWithExternalFilesCanBeSend(t, transport.SnapshotChunkSize/2, 3000, false, fs)
+	testSnapshotWithExternalFilesCanBeSend(t, transport.SnapshotChunkSize*3+100, 3000, false, fs)
+	testSnapshotWithExternalFilesCanBeSend(t, transport.SnapshotChunkSize/2, 3000, true, fs)
+	testSnapshotWithExternalFilesCanBeSend(t, transport.SnapshotChunkSize*3+100, 3000, true, fs)
 }
 
 func TestNoOPTransportCanBeCreated(t *testing.T) {
@@ -1020,11 +1009,8 @@ func TestInitialMessageCanBeSent(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if tt.queueSize() != 1 {
-		t.Errorf("queue len %d, want 1", tt.queueSize())
-	}
-	if len(tt.mu.breakers) != 1 {
-		t.Errorf("breakers len %d, want 1", len(tt.mu.breakers))
+	if tt.QueueSize() != 1 {
+		t.Errorf("queue len %d, want 1", tt.QueueSize())
 	}
 	if noopTransport.Connected != 1 {
 		t.Errorf("connected %d, want 1", noopTransport.Connected)
@@ -1059,14 +1045,14 @@ func TestFailedConnectionIsRemovedFromTransport(t *testing.T) {
 	// eventually be triggered and we just need to check & wait.
 	tt.Send(msg)
 	for i := 0; i < 5000; i++ {
-		if tt.queueSize() != 0 {
+		if tt.QueueSize() != 0 {
 			time.Sleep(time.Millisecond)
 		} else {
 			break
 		}
 	}
-	if tt.queueSize() != 0 {
-		t.Errorf("queue len %d, want 0", tt.queueSize())
+	if tt.QueueSize() != 0 {
+		t.Errorf("queue len %d, want 0", tt.QueueSize())
 	}
 }
 
@@ -1096,7 +1082,7 @@ func TestCircuitBreakerCauseFailFast(t *testing.T) {
 	// the returned value of the below Send() is not checked
 	tt.Send(msg)
 	for i := 0; i < 1000; i++ {
-		if tt.queueSize() != 0 {
+		if tt.QueueSize() != 0 {
 			time.Sleep(time.Millisecond)
 		} else {
 			break
@@ -1110,8 +1096,8 @@ func TestCircuitBreakerCauseFailFast(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if tt.queueSize() != 0 {
-		t.Errorf("queue len %d, want 0", tt.queueSize())
+	if tt.QueueSize() != 0 {
+		t.Errorf("queue len %d, want 0", tt.QueueSize())
 	}
 	if atomic.LoadUint64(&noopTransport.Connected) != 1 {
 		t.Errorf("connected %d, want 1", noopTransport.Connected)
@@ -1228,13 +1214,13 @@ func TestFailedStreamingDueToTooManyConnectionsHaveStatusUpdated(t *testing.T) {
 		}
 	}()
 	nodes.Add(100, 2, serverAddress)
-	for i := uint64(0); i < maxConnectionCount; i++ {
+	for i := uint64(0); i < transport.MaxConnectionCount; i++ {
 		sink := tt.GetStreamSink(100, 2)
 		if sink == nil {
 			t.Errorf("failed to connect")
 		}
 	}
-	for i := uint64(0); i < 2*maxConnectionCount; i++ {
+	for i := uint64(0); i < 2*transport.MaxConnectionCount; i++ {
 		sink := tt.GetStreamSink(100, 2)
 		if sink != nil {
 			t.Errorf("stream connection not limited")
@@ -1243,7 +1229,7 @@ func TestFailedStreamingDueToTooManyConnectionsHaveStatusUpdated(t *testing.T) {
 	failedSnapshotReported := false
 	for i := 0; i < 10000; i++ {
 		count := handler.getFailedSnapshotCount(100, 2)
-		if count != 2*maxConnectionCount {
+		if count != 2*transport.MaxConnectionCount {
 			time.Sleep(time.Millisecond)
 			continue
 		}
@@ -1277,66 +1263,15 @@ func TestInMemoryEntrySizeCanBeLimitedWhenSendingMessages(t *testing.T) {
 	}
 	req.SetBlocked(true)
 	for i := 0; i < 1000; i++ {
-		sent, reason := tt.send(msg)
+		sent, reason := tt.SendResult(msg)
 		if !sent {
-			if reason != rateLimited {
+			if reason != transport.RateLimited {
 				t.Errorf("not due to rate limit")
 			}
 			break
 		}
 		if i == 999 {
 			t.Errorf("no message rejected")
-		}
-	}
-}
-
-func TestInMemoryEntrySizeCanDropToZero(t *testing.T) {
-	fs := vfs.NewStrictMem()
-	handler := newTestMessageHandler()
-	tt, nodes, _, _, _ := newNOOPTestTransport(handler, fs)
-	defer func() {
-		if err := tt.Close(); err != nil {
-			t.Fatalf("failed to close the transport module %v", err)
-		}
-	}()
-	nodes.Add(100, 2, serverAddress)
-	e := raftpb.Entry{Cmd: make([]byte, 1024*1024*10)}
-	msg := raftpb.Message{
-		ClusterId: 100,
-		To:        2,
-		Type:      raftpb.Replicate,
-		Entries:   []raftpb.Entry{e},
-	}
-	_, key, err := nodes.Resolve(100, 2)
-	if err != nil {
-		t.Fatalf("failed to resolve the addr")
-	}
-	if !tt.Send(msg) {
-		t.Errorf("first send failed")
-	}
-	sq, ok := tt.mu.queues[key]
-	if !ok {
-		t.Fatalf("failed to get sq")
-	}
-	for len(sq.ch) != 0 {
-		time.Sleep(time.Millisecond)
-	}
-	for i := 0; i < 20; i++ {
-		sent := tt.Send(msg)
-		if !sent {
-			t.Errorf("failed to send2")
-		}
-	}
-	for len(sq.ch) != 0 {
-		time.Sleep(time.Millisecond)
-	}
-	for i := 0; i < 1000; i++ {
-		time.Sleep(10 * time.Millisecond)
-		if sq.rl.Get() == 0 {
-			return
-		}
-		if i == 999 {
-			t.Errorf("rate limiter failed to report correct size")
 		}
 	}
 }

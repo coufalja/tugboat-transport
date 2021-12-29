@@ -502,8 +502,15 @@ func (c *Config) GetClientTLSConfig(target string) (*tls.Config, error) {
 	return nil, nil
 }
 
-// NewTCPTransport creates and returns a new Transport transport module.
-func NewTCPTransport(cfg Config, requestHandler raftio.MessageHandler, chunkHandler raftio.ChunkHandler) *Transport {
+// Factory is a convenience Factory method
+func Factory(cfg Config) func(messageHandler raftio.MessageHandler, chunkHandler raftio.ChunkHandler) *Transport {
+	return func(messageHandler raftio.MessageHandler, chunkHandler raftio.ChunkHandler) *Transport {
+		return New(cfg, messageHandler, chunkHandler)
+	}
+}
+
+// New creates and returns a new transport module.
+func New(cfg Config, requestHandler raftio.MessageHandler, chunkHandler raftio.ChunkHandler) *Transport {
 	t := &Transport{
 		cfg:            cfg,
 		stopper:        syncutil.NewStopper(),

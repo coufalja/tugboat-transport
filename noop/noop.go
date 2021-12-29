@@ -129,8 +129,14 @@ type Transport struct {
 	TryConnect uint64
 }
 
-// NewNOOPTransport creates a new Transport instance.
-func NewNOOPTransport() *Transport {
+func Factory() func(messageHandler raftio.MessageHandler, chunkHandler raftio.ChunkHandler) *Transport {
+	return func(messageHandler raftio.MessageHandler, chunkHandler raftio.ChunkHandler) *Transport {
+		return New()
+	}
+}
+
+// New creates a new Transport instance.
+func New() *Transport {
 	return &Transport{
 		Req:     &Request{},
 		ConnReq: &ConnectRequest{},
