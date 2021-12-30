@@ -3,7 +3,7 @@ module github.com/coufalja/tugboat-transport
 go 1.18
 
 require (
-	github.com/coufalja/tugboat v0.0.0-20211229164007-2d309855b1b9
+	github.com/coufalja/tugboat v0.0.0-20211230112709-6b184ad39459
 	github.com/juju/ratelimit v1.0.1
 	github.com/lni/goutils v1.3.1-0.20210517080819-7f56813dc438
 	github.com/lni/vfs v0.2.0
@@ -12,7 +12,6 @@ require (
 require (
 	github.com/cockroachdb/errors v1.8.6 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20190617123548-eb05cc24525f // indirect
-	github.com/cockroachdb/pebble v0.0.0-20210406181039-e3809b89b488 // indirect
 	github.com/cockroachdb/redact v1.1.1 // indirect
 	github.com/cockroachdb/sentry-go v0.6.1-cockroachdb.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
