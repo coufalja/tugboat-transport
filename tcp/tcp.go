@@ -28,12 +28,11 @@ import (
 	"time"
 
 	"github.com/coufalja/tugboat/logger"
+	"github.com/coufalja/tugboat/raftio"
+	pb "github.com/coufalja/tugboat/raftpb"
 	"github.com/juju/ratelimit"
 	"github.com/lni/goutils/netutil"
 	"github.com/lni/goutils/syncutil"
-
-	"github.com/coufalja/tugboat/raftio"
-	pb "github.com/coufalja/tugboat/raftpb"
 )
 
 var (
@@ -267,14 +266,19 @@ type connection struct {
 
 func newConnection(conn net.Conn,
 	rb *ratelimit.Bucket, wb *ratelimit.Bucket) net.Conn {
-	c := &connection{conn: conn}
+	lr := io.Reader(conn)
+	lw := io.Writer(conn)
 	if rb != nil {
-		c.lr = ratelimit.Reader(conn, rb)
+		lr = ratelimit.Reader(conn, rb)
 	}
 	if wb != nil {
-		c.lw = ratelimit.Writer(conn, wb)
+		lw = ratelimit.Writer(conn, wb)
 	}
-	return c
+	return &connection{
+		conn: conn,
+		lr:   lr,
+		lw:   lw,
+	}
 }
 
 func (c *connection) Close() error {
@@ -282,17 +286,11 @@ func (c *connection) Close() error {
 }
 
 func (c *connection) Read(b []byte) (int, error) {
-	if c.lr != nil {
-		return c.lr.Read(b)
-	}
-	return c.conn.Read(b)
+	return c.lr.Read(b)
 }
 
 func (c *connection) Write(b []byte) (int, error) {
-	if c.lw != nil {
-		return c.lw.Write(b)
-	}
-	return c.conn.Write(b)
+	return c.lw.Write(b)
 }
 
 func (c *connection) LocalAddr() net.Addr {
