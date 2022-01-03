@@ -11,6 +11,7 @@ import (
 	"github.com/coufalja/tugboat"
 	"github.com/coufalja/tugboat/config"
 	"github.com/coufalja/tugboat-transport/tcp" // Import the tcp package
+	"github.com/coufalja/tugboat-logdb/pebble"
 )
 
 func main() {
@@ -27,6 +28,6 @@ func main() {
 		MutualTLS:                     false,
 		RaftAddress:                   "localhost:8079", // The same RaftAddress must be passed both to transport and the NodeHost
 	}
-	_, _ = tugboat.NewNodeHost(nhc, tcp.Factory(cfg))
+	_, _ = tugboat.NewNodeHost(nhc, tcp.Factory(cfg), pebble.Factory(pebble.GetDefaultLogDBConfig()))
 }
 ```
